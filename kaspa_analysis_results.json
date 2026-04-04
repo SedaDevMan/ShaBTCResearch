@@ -1,0 +1,9 @@
+{
+  "N_pairs": 3020,
+  "hash_nonce_corr": 0.05362384766340256,
+  "hash_nonce_pvalue": 0.958,
+  "msum_nonce_corr": 0.07021252810955048,
+  "msum_nonce_pvalue": 0.13,
+  "nonce_uniform_p": 0.9115697232503,
+  "matrix_uniform_p": 0.988998691704244
+}

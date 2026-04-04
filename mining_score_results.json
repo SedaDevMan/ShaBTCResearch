@@ -1,0 +1,42 @@
+{
+  "BTC": {
+    "name": "Bitcoin",
+    "cv": 0.11913925315071634,
+    "max_z": 1.8499055846060606,
+    "days_above_1_5x": 0,
+    "rev_pct_in_spikes": 0.0,
+    "n_days": 89
+  },
+  "LTC": {
+    "name": "Litecoin",
+    "cv": 0.19111516177274504,
+    "max_z": 2.108524666772104,
+    "days_above_1_5x": 0,
+    "rev_pct_in_spikes": 0.0,
+    "n_days": 90
+  },
+  "XMR": {
+    "name": "Monero",
+    "cv": 0.2396396231623413,
+    "max_z": 3.2683144271993045,
+    "days_above_1_5x": 6,
+    "rev_pct_in_spikes": 11.103084310191067,
+    "n_days": 89
+  },
+  "ZEC": {
+    "name": "Zcash",
+    "cv": 0.28049587436862883,
+    "max_z": 2.210106453337697,
+    "days_above_1_5x": 7,
+    "rev_pct_in_spikes": 12.402764728892251,
+    "n_days": 90
+  },
+  "ETC": {
+    "name": "Ethereum Classic",
+    "cv": 0.6280817332421265,
+    "max_z": 8.460599623460805,
+    "days_above_1_5x": 4,
+    "rev_pct_in_spikes": 14.564277463429692,
+    "n_days": 91
+  }
+}

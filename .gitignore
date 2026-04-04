@@ -1,0 +1,23 @@
+  # Node
+  node_modules/
+  npm-debug.log*
+
+  # Credentials — never commit
+  nh_config.json
+
+  # Compiled C extensions
+  *.so
+  build/
+
+  # Large generated data files
+  winners_5m.json
+  winners.json
+  blocks.json
+  kaspa_blocks.json
+  kaspa_winners.json
+  nearhash_results.json
+
+  # Logs
+  /tmp/
+  *.log
+  debug/

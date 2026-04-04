@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>shabtc — Mining Research Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #060d1b;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 0;
+    }
+    header {
+      background: #0d1829;
+      border-bottom: 1px solid #1a2744;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #3b82f6;
+      letter-spacing: 0.05em;
+    }
+    header span {
+      color: #64748b;
+      font-size: 0.85rem;
+    }
+    .hero {
+      padding: 3rem 2rem 1.5rem;
+      text-align: center;
+    }
+    .hero h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-bottom: 0.5rem;
+    }
+    .hero p {
+      color: #64748b;
+      font-size: 0.95rem;
+      max-width: 540px;
+      margin: 0 auto;
+    }
+    .modules {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1.5rem;
+      padding: 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .card {
+      background: #0d1829;
+      border: 1px solid #1a2744;
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      transition: border-color 0.2s, transform 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .card:hover {
+      border-color: #3b82f6;
+      transform: translateY(-2px);
+    }
+    .card-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .card-icon.blue { background: rgba(59, 130, 246, 0.15); }
+    .card-icon.green { background: rgba(34, 197, 94, 0.15); }
+    .card-icon.amber { background: rgba(245, 158, 11, 0.15); }
+    .card-icon.purple { background: rgba(168, 85, 247, 0.15); }
+    .card h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+      color: #e2e8f0;
+    }
+    .card p {
+      font-size: 0.85rem;
+      color: #64748b;
+      line-height: 1.5;
+    }
+    .badge {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge.live {
+      background: rgba(34, 197, 94, 0.15);
+      color: #22c55e;
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    .badge.soon {
+      background: rgba(100, 116, 139, 0.15);
+      color: #64748b;
+      border: 1px solid rgba(100, 116, 139, 0.3);
+    }
+    .card-meta {
+      margin-top: 1rem;
+      display: flex;
+      gap: 1rem;
+      font-size: 0.78rem;
+      color: #64748b;
+    }
+    .card-meta span {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: #64748b;
+      font-size: 0.8rem;
+      border-top: 1px solid #1a2744;
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>shabtc</h1>
+    <span>Mining Research &amp; Analytics</span>
+  </header>
+
+  <div class="hero">
+    <h2>Mining Intelligence Dashboard</h2>
+    <p>Live arbitrage monitoring, profitability analytics, and research tools for crypto mining.</p>
+  </div>
+
+  <div class="modules">
+    <a href="/nicehash/" class="card">
+      <span class="badge live">● Live</span>
+      <div class="card-icon blue">⚡</div>
+      <h3>NiceHash Arbitrage</h3>
+      <p>Live hashrate rental arbitrage monitor for ZEC (Equihash) and XMR (RandomX). One-click order placement with real-time P&amp;L.</p>
+      <div class="card-meta">
+        <span>🔁 30s refresh</span>
+        <span>📊 Order book</span>
+        <span>💰 Auto arb</span>
+      </div>
+    </a>
+
+    <div class="card" style="cursor:default; opacity:0.6;">
+      <span class="badge soon">Soon</span>
+      <div class="card-icon green">📈</div>
+      <h3>Mining Score</h3>
+      <p>90-day profitability variance scanner across BTC, LTC, XMR, ZEC, ETC. Optimal coin-switching analysis.</p>
+      <div class="card-meta">
+        <span>📅 90-day</span>
+        <span>🪙 5 coins</span>
+        <span>⚡ CV=0.628 ETC</span>
+      </div>
+    </div>
+
+    <div class="card" style="cursor:default; opacity:0.6;">
+      <span class="badge soon">Soon</span>
+      <div class="card-icon amber">🔬</div>
+      <h3>Algorithm Research</h3>
+      <p>Statistical &amp; algebraic attack analysis: xxHash64 inversion, VerusHash AES rounds, RandomX simulation results.</p>
+      <div class="card-meta">
+        <span>🧪 PoC validated</span>
+        <span>📐 Algebraic</span>
+      </div>
+    </div>
+
+    <div class="card" style="cursor:default; opacity:0.6;">
+      <span class="badge soon">Soon</span>
+      <div class="card-icon purple">⛏️</div>
+      <h3>Difficulty Monitor</h3>
+      <p>Real-time ETC difficulty tracking with spike detection. Identifies optimal mining windows based on historical variance patterns.</p>
+      <div class="card-meta">
+        <span>🎯 8.5σ spikes</span>
+        <span>📉 CV tracking</span>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    shabtc — PoC mining research platform &nbsp;·&nbsp; Port 55560
+  </footer>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "shabtc-nicehash-dashboard",
+  "version": "1.0.0",
+  "description": "NiceHash hashrate arbitrage live dashboard",
+  "main": "nh_server.js",
+  "scripts": {
+    "start": "node nh_server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}

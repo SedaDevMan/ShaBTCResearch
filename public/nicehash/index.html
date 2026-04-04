@@ -1,0 +1,1507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>NiceHash Arb — shabtc</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    /* ── Reset & base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    button, input, select { touch-action: manipulation; }
+    :root {
+      --bg:       #060d1b;
+      --surface:  #0d1829;
+      --border:   #1a2744;
+      --green:    #22c55e;
+      --red:      #ef4444;
+      --amber:    #f59e0b;
+      --blue:     #3b82f6;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --mono:     'JetBrains Mono', monospace;
+    }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    /* ── Nav ── */
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.5rem;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .nav-left { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--muted); }
+    .nav-left a { color: var(--blue); text-decoration: none; }
+    .nav-left .sep { color: var(--border); }
+    .nav-right { display: flex; align-items: center; gap: 1rem; }
+    .ws-status {
+      display: flex; align-items: center; gap: 0.4rem;
+      font-size: 0.78rem; color: var(--muted);
+    }
+    .ws-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); transition: background 0.3s;
+    }
+    .ws-dot.connected { background: var(--green); }
+    .ws-dot.error { background: var(--red); }
+    .btn-icon {
+      background: none; border: 1px solid var(--border);
+      color: var(--text); padding: 0.3rem 0.7rem;
+      border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+      transition: border-color 0.2s;
+    }
+    .btn-icon:hover { border-color: var(--blue); }
+
+    /* ── Ticker ── */
+    .ticker {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      overflow-x: auto;
+    }
+    .ticker-item { display: flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
+    .ticker-label { color: var(--muted); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .ticker-value { font-family: var(--mono); font-size: 0.9rem; color: var(--text); }
+    .ticker-badge {
+      font-size: 0.72rem; padding: 0.15rem 0.5rem; border-radius: 4px;
+      font-weight: 600; letter-spacing: 0.03em;
+    }
+    .badge-amber { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+    .badge-red { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .badge-green { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .badge-muted { background: rgba(100,116,139,0.15); color: var(--muted); border: 1px solid rgba(100,116,139,0.3); }
+
+    /* ── Main layout ── */
+    main {
+      padding: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* ── Arb Cards ── */
+    .arb-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (max-width: 768px) { .arb-grid { grid-template-columns: 1fr; } }
+
+    .arb-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      position: relative;
+      transition: border-color 0.3s;
+    }
+    .arb-card.opportunity { border-color: rgba(34,197,94,0.4); }
+    .arb-card.below { border-color: rgba(239,68,68,0.2); }
+
+    .arb-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .arb-title { font-weight: 700; font-size: 1rem; color: var(--text); }
+    .arb-algo { font-size: 0.75rem; color: var(--muted); margin-top: 0.1rem; }
+    .arb-ratio {
+      font-family: var(--mono);
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .arb-ratio.opp { color: var(--green); }
+    .arb-ratio.below { color: var(--red); }
+    .arb-ratio.neutral { color: var(--amber); }
+
+    /* Arb meter bar */
+    .arb-meter {
+      height: 8px;
+      border-radius: 4px;
+      background: var(--border);
+      margin: 0.75rem 0;
+      position: relative;
+      overflow: visible;
+    }
+    .arb-meter-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(to right, var(--red), var(--amber) 50%, var(--green));
+      transition: width 0.5s ease;
+      max-width: 100%;
+    }
+    .arb-meter-thumb {
+      position: absolute;
+      top: -3px;
+      width: 14px; height: 14px;
+      background: white;
+      border-radius: 50%;
+      border: 2px solid var(--surface);
+      transform: translateX(-50%);
+      transition: left 0.5s ease;
+      box-shadow: 0 0 6px rgba(0,0,0,0.5);
+    }
+    .arb-meter-marker {
+      position: absolute;
+      top: 100%;
+      font-size: 0.65rem;
+      color: var(--muted);
+      transform: translateX(-50%);
+      margin-top: 4px;
+      white-space: nowrap;
+    }
+
+    .arb-status {
+      display: flex; align-items: center; gap: 0.5rem;
+      font-size: 0.8rem; font-weight: 600;
+      margin-top: 0.75rem;
+    }
+    .pulse {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+    .arb-stats {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 0.5rem; margin-top: 0.75rem;
+    }
+    .arb-stat { font-size: 0.78rem; color: var(--muted); }
+    .arb-stat strong { color: var(--text); font-family: var(--mono); font-size: 0.82rem; }
+    .arb-stat-label { display: block; margin-bottom: 0.1rem; }
+    .data-warning {
+      font-size: 0.72rem; padding: 0.3rem 0.6rem; border-radius: 5px; margin-top: 0.5rem;
+      background: rgba(245,158,11,0.1); color: var(--amber);
+      border: 1px solid rgba(245,158,11,0.3);
+    }
+
+    .arb-view-btn {
+      width: 100%; margin-top: 1rem;
+      background: rgba(59,130,246,0.1);
+      border: 1px solid rgba(59,130,246,0.3);
+      color: var(--blue);
+      padding: 0.5rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    .arb-view-btn:hover { background: rgba(59,130,246,0.2); }
+
+    /* ── Opportunity banner ── */
+    .opp-banner {
+      background: rgba(34,197,94,0.08);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 8px;
+      padding: 0.75rem 1.25rem;
+      margin-bottom: 1.5rem;
+      display: none;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.875rem;
+    }
+    .opp-banner.show { display: flex; }
+    .opp-banner-text { color: var(--green); font-weight: 600; }
+    .opp-banner-sub { color: var(--muted); margin-left: 0.25rem; }
+
+    /* ── Bottom split: order book + buy panel ── */
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      align-items: start;
+    }
+    .orderbooks-stack { display: flex; flex-direction: column; gap: 1rem; }
+    .filter-bar {
+      display: flex; gap: 0.5rem; margin-bottom: 0.75rem;
+    }
+
+    /* ── Order book ── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .panel-title { font-weight: 600; font-size: 0.9rem; }
+    .algo-tabs { display: flex; gap: 0.25rem; }
+    .algo-tab {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 0.25rem 0.6rem;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      transition: all 0.2s;
+    }
+    .algo-tab.active {
+      background: rgba(59,130,246,0.15);
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .filter-row {
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; gap: 0.5rem;
+    }
+    .filter-btn {
+      background: none; border: 1px solid var(--border);
+      color: var(--muted); padding: 0.2rem 0.6rem;
+      border-radius: 5px; cursor: pointer; font-size: 0.78rem;
+      transition: all 0.2s;
+    }
+    .filter-btn.active {
+      background: rgba(34,197,94,0.1);
+      border-color: rgba(34,197,94,0.4);
+      color: var(--green);
+    }
+
+    .order-table-wrap { overflow-y: auto; max-height: 380px; }
+    .order-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .order-table th {
+      padding: 0.4rem 0.75rem;
+      color: var(--muted);
+      font-weight: 600;
+      text-align: left;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: var(--surface);
+      position: sticky; top: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .order-table td {
+      padding: 0.35rem 0.75rem;
+      border-bottom: 1px solid rgba(26,39,68,0.5);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+    }
+    .order-table tr:last-child td { border-bottom: none; }
+    .order-table tr.clickable { cursor: pointer; }
+    .order-table tr.clickable:hover td { background: rgba(59,130,246,0.05); }
+    .order-table tr.breakeven-line td {
+      border-top: 1px dashed rgba(245,158,11,0.5);
+      padding-top: 0.5rem;
+    }
+    .type-std { color: var(--blue); }
+    .type-fix { color: var(--muted); }
+    .profitable-yes { color: var(--green); }
+    .profitable-no { color: var(--muted); }
+    .order-empty {
+      text-align: center; padding: 2rem;
+      color: var(--muted); font-size: 0.85rem;
+    }
+
+    /* ── Buy panel ── */
+    .buy-panel { display: flex; flex-direction: column; }
+    .buy-body { padding: 1rem; flex: 1; display: flex; flex-direction: column; gap: 0.875rem; }
+
+    .form-group { display: flex; flex-direction: column; gap: 0.3rem; }
+    .form-label { font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .form-select, .form-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-family: var(--mono);
+      width: 100%;
+      transition: border-color 0.2s;
+    }
+    .form-select:focus, .form-input:focus {
+      outline: none;
+      border-color: var(--blue);
+    }
+    .form-hint { font-size: 0.72rem; color: var(--muted); font-family: var(--mono); }
+
+    .profit-calc {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      display: flex; flex-direction: column; gap: 0.4rem;
+    }
+    .calc-row {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.8rem;
+    }
+    .calc-label { color: var(--muted); }
+    .calc-value { font-family: var(--mono); font-size: 0.82rem; }
+    .calc-value.positive { color: var(--green); }
+    .calc-value.negative { color: var(--red); }
+    .calc-divider { border: none; border-top: 1px solid var(--border); margin: 0.25rem 0; }
+
+    .btn-place {
+      width: 100%;
+      background: var(--blue);
+      color: white;
+      border: none;
+      padding: 0.75rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.03em;
+      transition: opacity 0.2s, background 0.2s;
+    }
+    .btn-place:hover { background: #2563eb; }
+    .btn-place:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-place.success { background: var(--green); }
+
+    /* ── My Orders ── */
+    .my-orders-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .no-creds {
+      text-align: center;
+      padding: 2rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .no-creds a { color: var(--blue); cursor: pointer; text-decoration: none; }
+
+    /* ── Settings modal ── */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(6,13,27,0.85);
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: auto; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: min(600px, 95vw);
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 1.5rem;
+    }
+    .modal h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem; }
+    .modal-section { margin-bottom: 1.25rem; }
+    .modal-section-title {
+      font-size: 0.75rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.05em;
+      font-weight: 600; margin-bottom: 0.6rem;
+      border-bottom: 1px solid var(--border); padding-bottom: 0.4rem;
+    }
+    .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .modal-grid-3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 0.75rem; }
+    .modal-btns { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem; }
+    .btn-cancel {
+      background: none; border: 1px solid var(--border);
+      color: var(--muted); padding: 0.5rem 1rem;
+      border-radius: 8px; cursor: pointer; font-size: 0.875rem;
+    }
+    .btn-save {
+      background: var(--blue); border: none;
+      color: white; padding: 0.5rem 1.25rem;
+      border-radius: 8px; cursor: pointer; font-size: 0.875rem;
+      font-weight: 600;
+    }
+    .form-input.mono { font-family: var(--mono); }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.75rem 1.25rem;
+      font-size: 0.875rem; color: var(--text);
+      transform: translateY(100px); opacity: 0;
+      transition: transform 0.3s, opacity 0.3s;
+      z-index: 2000;
+      max-width: 360px;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.error { border-color: rgba(239,68,68,0.4); color: var(--red); }
+    .toast.success { border-color: rgba(34,197,94,0.4); color: var(--green); }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Responsive ─────────────────────────────────────── */
+
+    /* Tablet: ≤900px — stack buy panel below order books */
+    @media (max-width: 900px) {
+      .bottom-grid { grid-template-columns: 1fr; }
+      .buy-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+      }
+      .buy-body .profit-calc,
+      .buy-body .btn-place,
+      .buy-body #orderMsg { grid-column: 1 / -1; }
+    }
+
+    /* Mobile: ≤600px */
+    @media (max-width: 600px) {
+      nav { padding: 0 0.75rem; height: 48px; }
+      .nav-crumb { display: none; }
+      .ws-label-text { display: none; }
+      main { padding: 0.75rem; }
+
+      /* Ticker wraps 2-per-row */
+      .ticker {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.4rem 0;
+        padding: 0.6rem 1rem;
+        overflow-x: unset;
+      }
+
+      /* Revert buy form to single column */
+      .buy-body { display: flex; flex-direction: column; gap: 0.875rem; }
+
+      /* Compact tables */
+      .order-table-wrap { max-height: 240px; }
+      .order-table th, .order-table td { padding: 0.25rem 0.4rem; font-size: 0.72rem; }
+      .col-rigs { display: none; }
+
+      /* Filter */
+      .filter-bar { flex-wrap: wrap; gap: 0.4rem; }
+      .filter-btn { padding: 0.4rem 0.75rem; font-size: 0.8rem; }
+
+      /* Arb cards */
+      .arb-grid { grid-template-columns: 1fr; }
+      .arb-card { padding: 1rem; }
+      .arb-ratio { font-size: 1.6rem; }
+      .opp-banner { flex-wrap: wrap; }
+
+      /* Inputs */
+      .btn-place { padding: 0.9rem; font-size: 1rem; }
+      .form-select, .form-input { padding: 0.6rem 0.75rem; font-size: 1rem; }
+
+      /* Modal */
+      .modal { padding: 1rem; border-radius: 12px; }
+      .modal-grid { grid-template-columns: 1fr; }
+      .modal-grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+
+    /* Very small: ≤400px — hide Profit/d and Duration too, keep essentials */
+    @media (max-width: 400px) {
+      .order-table th:nth-child(5),
+      .order-table td:nth-child(5) { display: none; }
+      .order-table th:nth-child(6),
+      .order-table td:nth-child(6) { display: none; }
+      .ticker { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-left">
+    <a href="/">shabtc</a>
+    <span class="sep nav-crumb">/</span>
+    <span class="nav-crumb">NiceHash Arbitrage</span>
+  </div>
+  <div class="nav-right">
+    <div class="ws-status">
+      <div class="ws-dot" id="wsDot"></div>
+      <span id="wsLabel" class="ws-label-text">connecting...</span>
+    </div>
+    <button class="btn-icon" onclick="openSettings()">⚙ Settings</button>
+  </div>
+</nav>
+
+<!-- Ticker -->
+<div class="ticker">
+  <div class="ticker-item">
+    <span class="ticker-label">BTC</span>
+    <span class="ticker-value mono" id="tickBTC">—</span>
+  </div>
+  <div class="ticker-item">
+    <span class="ticker-label">ZEC</span>
+    <span class="ticker-value mono" id="tickZEC">—</span>
+  </div>
+  <div class="ticker-item">
+    <span class="ticker-label">XMR</span>
+    <span class="ticker-value mono" id="tickXMR">—</span>
+  </div>
+  <div class="ticker-item">
+    <span class="ticker-label">ZEC Net</span>
+    <span class="ticker-value mono" id="tickZEChr">—</span>
+  </div>
+  <div class="ticker-item">
+    <span class="ticker-label">XMR Net</span>
+    <span class="ticker-value mono" id="tickXMRhr">—</span>
+  </div>
+  <div class="ticker-item" id="halvingItem" style="display:none">
+    <span class="ticker-label">⏱ ZEC Halving</span>
+    <span class="ticker-badge badge-muted" id="halvingBadge">—</span>
+  </div>
+  <div class="ticker-item">
+    <span class="ticker-label">Updated</span>
+    <span class="ticker-value" id="tickTs">—</span>
+  </div>
+</div>
+
+<!-- Main -->
+<main>
+
+  <!-- Opportunity banner -->
+  <div class="opp-banner" id="oppBanner">
+    <div class="pulse"></div>
+    <div>
+      <span class="opp-banner-text" id="oppBannerText">ARB OPPORTUNITY</span>
+      <span class="opp-banner-sub" id="oppBannerSub"></span>
+    </div>
+  </div>
+
+  <!-- Arb cards -->
+  <div class="arb-grid">
+    <!-- ZEC -->
+    <div class="arb-card" id="zecCard">
+      <div class="arb-header">
+        <div>
+          <div class="arb-title">ZEC — Equihash</div>
+          <div class="arb-algo" id="zecAlgoSub">EQUIHASH</div>
+        </div>
+        <div class="arb-ratio" id="zecRatio">—</div>
+      </div>
+      <div class="arb-meter">
+        <div class="arb-meter-fill" id="zecMeterFill" style="width:50%"></div>
+        <div class="arb-meter-thumb" id="zecMeterThumb" style="left:50%"></div>
+        <span class="arb-meter-marker" style="left:50%">1.0×</span>
+      </div>
+      <div style="height:1.2rem"></div>
+      <div class="arb-status" id="zecStatus">
+        <span style="color:var(--muted)">Loading...</span>
+      </div>
+      <div class="arb-stats" id="zecStats"></div>
+    </div>
+
+    <!-- XMR -->
+    <div class="arb-card" id="xmrCard">
+      <div class="arb-header">
+        <div>
+          <div class="arb-title">XMR — RandomX</div>
+          <div class="arb-algo">RANDOMXMONERO</div>
+        </div>
+        <div class="arb-ratio" id="xmrRatio">—</div>
+      </div>
+      <div class="arb-meter">
+        <div class="arb-meter-fill" id="xmrMeterFill" style="width:50%"></div>
+        <div class="arb-meter-thumb" id="xmrMeterThumb" style="left:50%"></div>
+        <span class="arb-meter-marker" style="left:50%">1.0×</span>
+      </div>
+      <div style="height:1.2rem"></div>
+      <div class="arb-status" id="xmrStatus">
+        <span style="color:var(--muted)">Loading...</span>
+      </div>
+      <div class="arb-stats" id="xmrStats"></div>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <button class="filter-btn active" id="filterAll"    onclick="setFilter('all')">All</button>
+    <button class="filter-btn"        id="filterProfit" onclick="setFilter('profit')">✅ Profitable</button>
+    <button class="filter-btn"        id="filterStd"    onclick="setFilter('standard')">STANDARD only</button>
+  </div>
+
+  <!-- Order books + buy panel -->
+  <div class="bottom-grid">
+
+    <div class="orderbooks-stack">
+
+      <!-- ZEC order book -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">ZEC — Equihash</span>
+        </div>
+        <div class="order-table-wrap">
+          <table class="order-table">
+            <thead><tr>
+              <th>Type</th>
+              <th>Bid (USD/unit/d)</th>
+              <th>Speed (GSol/s)</th>
+              <th class="col-rigs">Rigs</th>
+              <th>Profit/d</th>
+              <th>Duration</th>
+              <th>Total Revenue</th>
+              <th>Total Profit</th>
+            </tr></thead>
+            <tbody id="orderBodyEQ">
+              <tr><td colspan="8" class="order-empty">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- XMR order book -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">XMR — RandomX</span>
+        </div>
+        <div class="order-table-wrap">
+          <table class="order-table">
+            <thead><tr>
+              <th>Type</th>
+              <th>Bid (USD/unit/d)</th>
+              <th>Speed (GH/s)</th>
+              <th class="col-rigs">Rigs</th>
+              <th>Profit/d</th>
+              <th>Duration</th>
+              <th>Total Revenue</th>
+              <th>Total Profit</th>
+            </tr></thead>
+            <tbody id="orderBodyXMR">
+              <tr><td colspan="8" class="order-empty">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /orderbooks-stack -->
+
+    <!-- Buy panel -->
+    <div class="panel buy-panel">
+      <div class="panel-header">
+        <span class="panel-title">Place Order</span>
+      </div>
+      <div class="buy-body">
+        <div class="form-group">
+          <label class="form-label">Algorithm</label>
+          <select class="form-select" id="buyAlgo" onchange="onAlgoChange()">
+            <option value="EQUIHASH">EQUIHASH (ZEC)</option>
+            <option value="RANDOMXMONERO">RANDOMXMONERO (XMR)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Bid Price (USD per unit/day)</label>
+          <input type="number" class="form-input" id="buyBid" placeholder="25000"
+            step="100" min="0" oninput="calcProfit()">
+          <span class="form-hint" id="bidHintBTC"></span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Speed Limit (units)</label>
+          <input type="number" class="form-input" id="buySpeed" placeholder="0.003"
+            step="0.001" min="0" oninput="calcProfit()">
+          <span class="form-hint" id="speedHint">min 0.003 GSol/s for EQUIHASH</span>
+        </div>
+
+        <!-- P&L calculator -->
+        <div class="profit-calc" id="profitCalc">
+          <div class="calc-row">
+            <span class="calc-label">Mining revenue</span>
+            <span class="calc-value" id="calcRevenue">—</span>
+          </div>
+          <div class="calc-row">
+            <span class="calc-label">NH cost</span>
+            <span class="calc-value" id="calcCost">—</span>
+          </div>
+          <hr class="calc-divider">
+          <div class="calc-row">
+            <span class="calc-label" style="font-weight:600">Est. profit/day</span>
+            <span class="calc-value" id="calcProfit" style="font-weight:700">—</span>
+          </div>
+          <div class="calc-row">
+            <span class="calc-label">Est. fill speed</span>
+            <span class="calc-value" id="calcFill">—</span>
+          </div>
+          <div class="calc-row">
+            <span class="calc-label">Credit lasts</span>
+            <span class="calc-value" id="calcDuration">—</span>
+          </div>
+          <hr class="calc-divider">
+          <div class="calc-row">
+            <span class="calc-label">Total revenue (full period)</span>
+            <span class="calc-value" id="calcTotalRevenue">—</span>
+          </div>
+          <div class="calc-row">
+            <span class="calc-label" style="font-weight:600">Total profit (full period)</span>
+            <span class="calc-value" id="calcTotalProfit" style="font-weight:700">—</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Budget to deposit (BTC)</label>
+          <input type="number" class="form-input" id="buyAmount" placeholder="0.01"
+            value="0.01" step="0.0001" min="0" oninput="calcProfit(); renderOrderbook()">
+          <span class="form-hint" id="amountHintUSDC"></span>
+          <span class="form-hint" id="amountHintMin" style="color:var(--amber)"></span>
+        </div>
+
+        <button class="btn-place" id="btnPlace" onclick="placeOrder()">
+          PLACE ORDER
+        </button>
+        <div id="orderMsg" style="font-size:0.78rem; color:var(--muted); text-align:center; min-height:1.2rem"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- My Orders -->
+  <div class="my-orders-section">
+    <div class="panel-header">
+      <span class="panel-title">My Active Orders</span>
+      <button class="btn-icon" onclick="loadMyOrders()" style="font-size:0.78rem">↻ Refresh</button>
+    </div>
+    <div id="myOrdersBody">
+      <div class="no-creds">
+        Enter NiceHash credentials in <a onclick="openSettings()">⚙ Settings</a> to view your orders.
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Settings modal -->
+<div class="modal-overlay" id="settingsOverlay" onclick="closeIfOutside(event)">
+  <div class="modal">
+    <h2>⚙ Settings</h2>
+
+    <div class="modal-section">
+      <div class="modal-section-title">NiceHash API Credentials</div>
+      <div class="modal-grid" style="gap:0.75rem">
+        <div class="form-group" style="grid-column:1/-1">
+          <label class="form-label">Organization ID</label>
+          <input type="text" class="form-input mono" id="cfgOrgId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+        </div>
+        <div class="form-group">
+          <label class="form-label">API Key</label>
+          <input type="text" class="form-input mono" id="cfgApiKey" placeholder="API key">
+        </div>
+        <div class="form-group">
+          <label class="form-label">API Secret</label>
+          <input type="password" class="form-input mono" id="cfgApiSecret" placeholder="API secret">
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">ZEC Mining Pool (EQUIHASH)</div>
+      <div class="form-group" style="margin-bottom:0.5rem">
+        <label class="form-label">Pool Host</label>
+        <input type="text" class="form-input mono" id="cfgZecHost" placeholder="zec.2miners.com">
+      </div>
+      <div class="modal-grid">
+        <div class="form-group">
+          <label class="form-label">Port</label>
+          <input type="number" class="form-input mono" id="cfgZecPort" placeholder="2020">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input type="text" class="form-input mono" id="cfgZecUser" placeholder="t1YourZecAddress.rig1">
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:0.5rem">
+        <label class="form-label">Password</label>
+        <input type="text" class="form-input mono" id="cfgZecPass" placeholder="x">
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">XMR Mining Pool (RANDOMXMONERO)</div>
+      <div class="form-group" style="margin-bottom:0.5rem">
+        <label class="form-label">Pool Host</label>
+        <input type="text" class="form-input mono" id="cfgXmrHost" placeholder="gulf.moneroocean.stream">
+      </div>
+      <div class="modal-grid">
+        <div class="form-group">
+          <label class="form-label">Port</label>
+          <input type="number" class="form-input mono" id="cfgXmrPort" placeholder="10128">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input type="text" class="form-input mono" id="cfgXmrUser" placeholder="4YourXmrAddress.rig1">
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:0.5rem">
+        <label class="form-label">Password</label>
+        <input type="text" class="form-input mono" id="cfgXmrPass" placeholder="x">
+      </div>
+    </div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
+      <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let live = null;
+let orderbook = { EQUIHASH: [], RANDOMXMONERO: [] };
+let currentAlgo = 'EQUIHASH';
+let orderFilter = 'all';
+let ws = null;
+let wsBackoff = 1000;
+let config = {};
+
+const ALGO_UNITS = { EQUIHASH: 'GSol/s', RANDOMXMONERO: 'GH/s' };
+const ALGO_COINS = { EQUIHASH: 'zec', RANDOMXMONERO: 'xmr' };
+
+// ── WebSocket ─────────────────────────────────────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    setWS(true);
+    wsBackoff = 1000;
+    ws.send(JSON.stringify({ type: 'ping' }));
+  };
+
+  ws.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'live') {
+        live = msg.data;
+        updateUI();
+        fetchBothOrderbooks();
+      }
+    } catch {}
+  };
+
+  ws.onerror = () => setWS(false);
+  ws.onclose = () => {
+    setWS(false);
+    setTimeout(connectWS, wsBackoff);
+    wsBackoff = Math.min(wsBackoff * 2, 30000);
+  };
+}
+
+function setWS(ok) {
+  const dot = document.getElementById('wsDot');
+  const lbl = document.getElementById('wsLabel');
+  dot.className = 'ws-dot ' + (ok ? 'connected' : 'error');
+  lbl.textContent = ok ? 'LIVE' : 'reconnecting...';
+}
+
+// ── UI Updates ────────────────────────────────────────────────────────────
+function fmt$(n) {
+  if (!n && n !== 0) return '—';
+  return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+function fmtK(n) {
+  if (!n && n !== 0) return '—';
+  return '$' + (n / 1000).toFixed(1) + 'K';
+}
+
+function updateUI() {
+  if (!live) return;
+  const { prices, network, halving, nh_market, zec_arb, xmr_arb } = live;
+
+  // Ticker
+  document.getElementById('tickBTC').textContent = fmt$(prices.btc);
+  document.getElementById('tickZEC').textContent = fmt$(prices.zec);
+  document.getElementById('tickXMR').textContent = fmt$(prices.xmr);
+  document.getElementById('tickZEChr').textContent = network.zec_hr_gsol ? network.zec_hr_gsol.toFixed(2) + ' GSol/s' : '—';
+  document.getElementById('tickXMRhr').textContent = network.xmr_hr_gh ? network.xmr_hr_gh.toFixed(2) + ' GH/s' : '—';
+  document.getElementById('tickTs').textContent = new Date(live.ts).toLocaleTimeString();
+
+  // Halving
+  if (halving && halving.days !== null) {
+    const halvEl = document.getElementById('halvingItem');
+    const halvBadge = document.getElementById('halvingBadge');
+    halvEl.style.display = '';
+    halvBadge.textContent = halving.days.toFixed(0) + 'd';
+    if (halving.days < 7) halvBadge.className = 'ticker-badge badge-red';
+    else if (halving.days < 14) halvBadge.className = 'ticker-badge badge-amber';
+    else halvBadge.className = 'ticker-badge badge-muted';
+  }
+
+  // Arb cards
+  updateArbCard('zec', zec_arb, 'ZEC', nh_market?.EQUIHASH);
+  updateArbCard('xmr', xmr_arb, 'XMR', nh_market?.RANDOMXMONERO);
+
+  // Opportunity banner
+  const banner = document.getElementById('oppBanner');
+  const opps = [];
+  if (zec_arb?.opportunity) opps.push(`ZEC ${zec_arb.arb_ratio.toFixed(2)}×`);
+  if (xmr_arb?.opportunity) opps.push(`XMR ${xmr_arb.arb_ratio.toFixed(2)}×`);
+  if (opps.length > 0) {
+    banner.classList.add('show');
+    document.getElementById('oppBannerText').textContent = 'ARB OPPORTUNITY';
+    document.getElementById('oppBannerSub').textContent = opps.join(' · ') + ' — buy hashrate below break-even';
+  } else {
+    banner.classList.remove('show');
+  }
+
+  // Recalc profit if form has values
+  calcProfit();
+}
+
+function updateArbCard(prefix, arb, coinName, nhMarket) {
+  const card = document.getElementById(prefix + 'Card');
+  const ratioEl = document.getElementById(prefix + 'Ratio');
+  const statusEl = document.getElementById(prefix + 'Status');
+  const statsEl = document.getElementById(prefix + 'Stats');
+  const fillEl = document.getElementById(prefix + 'MeterFill');
+  const thumbEl = document.getElementById(prefix + 'MeterThumb');
+
+  if (!arb) {
+    ratioEl.textContent = '—';
+    statusEl.innerHTML = '<span style="color:var(--muted)">No data</span>';
+    return;
+  }
+
+  const ratio = arb.arb_ratio;
+  const dq = arb.data_quality || 'ok';
+  // Map ratio to 0-100% (0.5× = 0%, 1.0× = 50%, 2.0× = 100%)
+  const pct = Math.min(100, Math.max(0, ((ratio - 0.5) / 1.5) * 100));
+
+  ratioEl.textContent = ratio.toFixed(2) + '×';
+  if (dq === 'suspicious') {
+    ratioEl.className = 'arb-ratio';
+    card.className = 'arb-card';
+    statusEl.innerHTML = '<span style="color:var(--amber)">⚠ DATA SUSPICIOUS</span>';
+  } else if (ratio >= 1.3) {
+    ratioEl.className = 'arb-ratio opp';
+    card.className = 'arb-card opportunity';
+    statusEl.innerHTML = '<div class="pulse"></div><span style="color:var(--green)">OPPORTUNITY</span>';
+  } else if (ratio >= 1.0) {
+    ratioEl.className = 'arb-ratio opp';
+    card.className = 'arb-card';
+    statusEl.innerHTML = '<span style="color:var(--amber)">MARGINAL</span>';
+  } else {
+    ratioEl.className = 'arb-ratio below';
+    card.className = 'arb-card below';
+    statusEl.innerHTML = '<span style="color:var(--red)">BELOW BREAKEVEN</span>';
+  }
+
+  fillEl.style.width = pct + '%';
+  thumbEl.style.left = pct + '%';
+
+  const marketUsd = arb.nh_market_usd || (nhMarket ? nhMarket.usd : null);
+
+  const dqWarning = dq === 'suspicious'
+    ? `<div class="data-warning">⚠ Ratio >5× — orderbook price may be stale or unrepresentative. Verify manually.</div>`
+    : dq === 'verify'
+    ? `<div class="data-warning">Ratio >2× — double-check live orderbook before placing an order.</div>`
+    : '';
+
+  const halvingRow = arb.post_halving_ratio != null
+    ? `<div class="arb-stat">
+        <span class="arb-stat-label">Post-halving ratio</span>
+        <strong style="color:${arb.post_halving_ratio >= 1 ? 'var(--amber)' : 'var(--red)'}">
+          ${arb.post_halving_ratio.toFixed(2)}×
+        </strong>
+      </div>`
+    : '';
+
+  statsEl.innerHTML = `
+    <div class="arb-stat">
+      <span class="arb-stat-label">Mining value</span>
+      <strong>${fmtK(arb.actual_usd_per_unit)}/unit/d</strong>
+    </div>
+    <div class="arb-stat">
+      <span class="arb-stat-label">Break-even bid</span>
+      <strong>${fmtK(arb.breakeven_bid_usd)}/unit/d</strong>
+    </div>
+    <div class="arb-stat">
+      <span class="arb-stat-label">Cheapest alive order</span>
+      <strong>${marketUsd ? fmtK(marketUsd) : '—'}/unit/d</strong>
+    </div>
+    <div class="arb-stat">
+      <span class="arb-stat-label">Spread</span>
+      <strong style="color:${ratio >= 1 ? 'var(--green)' : 'var(--red)'}">
+        ${ratio >= 1 ? '+' : ''}${((ratio - 1) * 100).toFixed(1)}%
+      </strong>
+    </div>
+    ${halvingRow}
+    ${dqWarning}
+  `;
+}
+
+// ── Order book ────────────────────────────────────────────────────────────
+async function fetchOrderbook(algo) {
+  try {
+    const r = await fetch(`/api/orderbook?algo=${algo}`);
+    const data = await r.json();
+    orderbook[algo] = data.orders || [];
+    renderOrderbook();
+  } catch {}
+}
+
+function fetchBothOrderbooks() {
+  fetchOrderbook('EQUIHASH');
+  fetchOrderbook('RANDOMXMONERO');
+}
+
+function selectAlgo(algo) {
+  currentAlgo = algo;
+  document.getElementById('buyAlgo').value = algo;
+  document.getElementById('speedHint').textContent = `min ${ALGO_MIN_SPEED[algo]} ${ALGO_UNITS[algo]}`;
+  calcProfit();
+}
+
+function onAlgoChange() {
+  selectAlgo(document.getElementById('buyAlgo').value);
+}
+
+function setFilter(f) {
+  orderFilter = f;
+  ['all', 'profit', 'standard'].forEach(id => {
+    document.getElementById('filter' + id.charAt(0).toUpperCase() + id.slice(1)).classList.toggle('active', id === f);
+  });
+  renderOrderbook();
+}
+
+function fmtDuration(hours) {
+  if (!isFinite(hours) || hours <= 0) return '—';
+  if (hours >= 48)   return (hours / 24).toFixed(1) + 'd';
+  if (hours >= 1)    return hours.toFixed(1) + 'h';
+  return (hours * 60).toFixed(0) + 'min';
+}
+
+function renderOneOrderbook(algo, tbodyId) {
+  const orders    = orderbook[algo] || [];
+  const arb       = algo === 'EQUIHASH' ? live?.zec_arb : live?.xmr_arb;
+  const breakeven = arb ? arb.breakeven_bid_usd : null;
+  const depositUSD = (parseFloat(document.getElementById('buyAmount').value) || 0.01) * (live?.prices?.btc || 0);
+
+  let filtered = [...orders];
+  if (orderFilter === 'profit')   filtered = filtered.filter(o => o.profitable);
+  if (orderFilter === 'standard') filtered = filtered.filter(o => o.type === 'STANDARD');
+  filtered.sort((a, b) => (b.profit_day ?? -Infinity) - (a.profit_day ?? -Infinity));
+
+  const tbody = document.getElementById(tbodyId);
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="order-empty">No orders</td></tr>';
+    return;
+  }
+
+  let html = '';
+  let splitShown = false;
+  for (const o of filtered) {
+    if (breakeven && !splitShown && !o.profitable) {
+      splitShown = true;
+      html += `<tr><td colspan="6" style="padding:0.3rem 0.75rem; font-size:0.7rem; color:var(--amber); border-top:1px dashed rgba(245,158,11,0.4)">
+        ── below break-even ($${breakeven.toFixed(0)}/unit/d) ──
+      </td></tr>`;
+    }
+    const typeClass  = o.type === 'STANDARD' ? 'type-std' : 'type-fix';
+    const pnlClass   = o.profitable ? 'profitable-yes' : 'profitable-no';
+    const profitText = o.profit_day !== null
+      ? (o.profit_day >= 0 ? '+' : '') + '$' + o.profit_day.toFixed(2)
+      : '—';
+
+    const costPerDay  = o.bid_usd * o.speed * 1.03;
+    const durationDay = costPerDay > 0 ? depositUSD / costPerDay : 0;
+    const durText     = fmtDuration(durationDay * 24);
+
+    // Actual revenue & profit for the full duration funded by the budget
+    const revenuePerDay = o.profit_day !== null ? o.profit_day + costPerDay : null;
+    const totalRevenue  = revenuePerDay !== null ? revenuePerDay * durationDay : null;
+    const totalProfit   = o.profit_day  !== null ? o.profit_day  * durationDay : null;
+    const revText  = totalRevenue !== null ? '$' + totalRevenue.toFixed(2) : '—';
+    const totClass = totalProfit  !== null && totalProfit >= 0 ? 'profitable-yes' : 'profitable-no';
+    const totText  = totalProfit  !== null
+      ? (totalProfit >= 0 ? '+' : '') + '$' + totalProfit.toFixed(2)
+      : '—';
+
+    html += `<tr class="clickable" onclick="prefillOrder('${algo}', ${o.bid_usd}, ${o.speed})">
+      <td class="${typeClass}">${o.type}</td>
+      <td>${o.bid_usd ? '$' + o.bid_usd.toLocaleString() : '—'}</td>
+      <td>${o.speed ? o.speed.toFixed(4) : '—'}</td>
+      <td class="col-rigs">${o.rigs || '—'}</td>
+      <td class="${pnlClass}">${profitText}</td>
+      <td style="color:var(--muted); font-family:var(--mono); font-size:0.78rem">${durText}</td>
+      <td style="font-family:var(--mono)">${revText}</td>
+      <td class="${totClass}" style="font-weight:600">${totText}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function renderOrderbook() {
+  renderOneOrderbook('EQUIHASH',      'orderBodyEQ');
+  renderOneOrderbook('RANDOMXMONERO', 'orderBodyXMR');
+}
+
+function prefillOrder(algo, usd, speed) {
+  selectAlgo(algo);
+  document.getElementById('buyBid').value   = usd.toFixed(0);
+  document.getElementById('buySpeed').value = speed ? speed.toFixed(4) : '';
+  calcProfit();
+  // On mobile the buy panel is below the order books — scroll to it
+  const panel = document.querySelector('.buy-panel');
+  if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('buyBid').focus();
+}
+
+// ── P&L Calculator ────────────────────────────────────────────────────────
+// Source: GET /main/api/v2/public/buy/info
+const ALGO_MIN_BTC   = { EQUIHASH: 0.001, RANDOMXMONERO: 0.001 };
+const ALGO_MIN_SPEED = { EQUIHASH: 0.003, RANDOMXMONERO: 0.0001 }; // GSol/s, GH/s
+
+function calcProfit() {
+  if (!live) return;
+  const algo     = document.getElementById('buyAlgo').value;
+  const bid      = parseFloat(document.getElementById('buyBid').value);
+  const speed    = parseFloat(document.getElementById('buySpeed').value);
+  const amount   = parseFloat(document.getElementById('buyAmount').value);
+  const btcPrice = live.prices.btc;
+  const minBTC   = ALGO_MIN_BTC[algo] || 0.005;
+
+  // BTC equivalent of bid price
+  if (bid && btcPrice) {
+    const btcPer = bid / btcPrice;
+    document.getElementById('bidHintBTC').textContent = '≈ ' + btcPer.toFixed(8) + ' BTC/unit/day';
+  } else {
+    document.getElementById('bidHintBTC').textContent = '';
+  }
+
+  // USDC equivalent of deposit amount
+  const amountUSDC = document.getElementById('amountHintUSDC');
+  const amountMin  = document.getElementById('amountHintMin');
+  const minUSDC    = (minBTC * btcPrice).toFixed(0);
+  amountMin.textContent = `min ${minBTC} BTC (≈ $${Number(minUSDC).toLocaleString()} USDC)`;
+  if (amount && btcPrice) {
+    const usdc = (amount * btcPrice).toFixed(0);
+    amountUSDC.textContent = '≈ $' + Number(usdc).toLocaleString() + ' USDC';
+    amountMin.style.color = amount < minBTC ? 'var(--red)' : 'var(--muted)';
+  } else {
+    amountUSDC.textContent = '';
+    amountMin.style.color = 'var(--muted)';
+  }
+
+  const netHR    = algo === 'EQUIHASH' ? live.network.zec_hr_gsol : live.network.xmr_hr_gh;
+  const coinPrice = algo === 'EQUIHASH' ? live.prices.zec : live.prices.xmr;
+  const bpd      = algo === 'EQUIHASH' ? 1152 : 720;
+  const reward   = algo === 'EQUIHASH' ? 1.375 : 0.6;
+
+  if (!bid || isNaN(bid) || !speed || isNaN(speed) || !netHR || !coinPrice) {
+    document.getElementById('calcRevenue').textContent = '—';
+    document.getElementById('calcCost').textContent = '—';
+    document.getElementById('calcProfit').textContent = '—';
+    document.getElementById('calcProfit').className = 'calc-value';
+    document.getElementById('calcFill').textContent        = '—';
+    document.getElementById('calcDuration').textContent     = '—';
+    document.getElementById('calcTotalRevenue').textContent = '—';
+    document.getElementById('calcTotalProfit').textContent  = '—';
+    document.getElementById('calcTotalProfit').className    = 'calc-value';
+    return;
+  }
+
+  const revenue = (speed / netHR) * bpd * reward * coinPrice * 0.99;
+  const cost    = bid * speed * 1.03; // 3% NH buyer fee
+  const profit  = revenue - cost;
+
+  document.getElementById('calcRevenue').textContent = '$' + revenue.toFixed(2) + '/day';
+  document.getElementById('calcCost').textContent    = '$' + cost.toFixed(2)    + '/day';
+  document.getElementById('calcProfit').textContent  = (profit >= 0 ? '+' : '') + '$' + profit.toFixed(2) + '/day';
+  document.getElementById('calcProfit').className    = 'calc-value ' + (profit >= 0 ? 'positive' : 'negative');
+
+  const fillPct = (speed / netHR * 100).toFixed(3);
+  document.getElementById('calcFill').textContent = `${fillPct}% of network`;
+
+  // Duration + total period estimates
+  const durEl          = document.getElementById('calcDuration');
+  const totalRevEl     = document.getElementById('calcTotalRevenue');
+  const totalProfitEl  = document.getElementById('calcTotalProfit');
+  if (amount && cost > 0) {
+    const depositUSD  = amount * btcPrice;
+    const durationDay = depositUSD / cost;           // days the credit lasts
+    const hours       = durationDay * 24;
+    let durText;
+    if (hours >= 48)     durText = durationDay.toFixed(1) + ' days';
+    else if (hours >= 1) durText = hours.toFixed(1) + ' hours';
+    else                 durText = (hours * 60).toFixed(0) + ' min';
+    durEl.textContent = durText;
+
+    const totalRev    = revenue * durationDay;
+    const totalProfit = totalRev - depositUSD;
+    totalRevEl.textContent    = '$' + totalRev.toFixed(2);
+    totalProfitEl.textContent = (totalProfit >= 0 ? '+' : '') + '$' + totalProfit.toFixed(2);
+    totalProfitEl.className   = 'calc-value ' + (totalProfit >= 0 ? 'positive' : 'negative');
+  } else {
+    durEl.textContent         = '—';
+    totalRevEl.textContent    = '—';
+    totalProfitEl.textContent = '—';
+    totalProfitEl.className   = 'calc-value';
+  }
+}
+
+// ── Place order ───────────────────────────────────────────────────────────
+async function placeOrder() {
+  const algo = document.getElementById('buyAlgo').value;
+  const bid = parseFloat(document.getElementById('buyBid').value);
+  const speed = parseFloat(document.getElementById('buySpeed').value);
+  const amount = parseFloat(document.getElementById('buyAmount').value);
+
+  if (!bid || !speed || !amount) {
+    showToast('Fill in bid, speed, and BTC amount', 'error');
+    return;
+  }
+
+  if (!config.api_key) {
+    showToast('Add NiceHash credentials in Settings first', 'error');
+    return;
+  }
+
+  const poolConfig = config.pools?.[algo] || {};
+  if (!poolConfig.host) {
+    showToast('Configure pool settings for ' + algo + ' in Settings', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btnPlace');
+  btn.disabled = true;
+  btn.textContent = 'Placing...';
+
+  const btcPrice = live?.prices?.btc || 1;
+  const bidBTC = bid / btcPrice;
+
+  const payload = {
+    market: 'EU',
+    algorithm: { algorithm: algo },
+    amount: amount.toString(),
+    price: bidBTC.toFixed(8),
+    limit: speed.toString(),
+    type: 'STANDARD',
+    poolHostname: poolConfig.host,
+    poolPort: parseInt(poolConfig.port) || 3357,
+    username: poolConfig.user || '',
+    password: poolConfig.pass || 'x',
+  };
+
+  try {
+    const r = await fetch('/api/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      showToast('Order placed successfully!', 'success');
+      btn.className = 'btn-place success';
+      btn.textContent = '✓ ORDER PLACED';
+      setTimeout(() => {
+        btn.className = 'btn-place';
+        btn.textContent = 'PLACE ORDER';
+        btn.disabled = false;
+        loadMyOrders();
+      }, 3000);
+    } else {
+      showToast('Order failed: ' + (data.error || JSON.stringify(data)), 'error');
+      btn.disabled = false;
+      btn.textContent = 'PLACE ORDER';
+    }
+  } catch (e) {
+    showToast('Request failed: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'PLACE ORDER';
+  }
+}
+
+// ── My Orders ─────────────────────────────────────────────────────────────
+async function loadMyOrders() {
+  if (!config.api_key) return;
+  const body = document.getElementById('myOrdersBody');
+  body.innerHTML = '<div class="order-empty">Loading...</div>';
+  try {
+    const r = await fetch('/api/myorders?algo=' + currentAlgo);
+    const data = await r.json();
+    const orders = data.list || data.orders || [];
+    if (!orders.length) {
+      body.innerHTML = '<div class="order-empty">No active orders for ' + currentAlgo + '</div>';
+      return;
+    }
+    let html = `<table class="order-table">
+      <thead><tr><th>ID</th><th>Type</th><th>Bid BTC</th><th>Speed</th><th>Status</th><th></th></tr></thead>
+      <tbody>`;
+    for (const o of orders) {
+      html += `<tr>
+        <td style="font-size:0.7rem; color:var(--muted)">${(o.id || '').slice(0, 8)}…</td>
+        <td class="type-std">${o.type || 'STD'}</td>
+        <td>${o.price || '—'}</td>
+        <td>${o.limit || '—'}</td>
+        <td>${o.status?.code || o.status || '—'}</td>
+        <td><button onclick="cancelOrder('${o.id}')" style="background:none;border:1px solid var(--red);color:var(--red);padding:0.15rem 0.4rem;border-radius:4px;cursor:pointer;font-size:0.72rem">✕</button></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = '<div class="order-empty" style="color:var(--red)">' + e.message + '</div>';
+  }
+}
+
+async function cancelOrder(id) {
+  if (!confirm('Cancel order ' + id + '?')) return;
+  try {
+    const r = await fetch('/api/order/' + id, { method: 'DELETE' });
+    const data = await r.json();
+    showToast(r.ok ? 'Order cancelled' : ('Cancel failed: ' + (data.error || '')), r.ok ? 'success' : 'error');
+    loadMyOrders();
+  } catch (e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+}
+
+// ── Settings ─────────────────────────────────────────────────────────────
+async function openSettings() {
+  try {
+    const r = await fetch('/api/config');
+    config = await r.json();
+  } catch {}
+
+  document.getElementById('cfgOrgId').value = config.org_id || '';
+  document.getElementById('cfgApiKey').value = config.api_key || '';
+  document.getElementById('cfgApiSecret').value = '';
+
+  const zec = config.pools?.EQUIHASH || {};
+  document.getElementById('cfgZecHost').value = zec.host || '';
+  document.getElementById('cfgZecPort').value = zec.port || '';
+  document.getElementById('cfgZecUser').value = zec.user || '';
+  document.getElementById('cfgZecPass').value = zec.pass || '';
+
+  const xmr = config.pools?.RANDOMXMONERO || {};
+  document.getElementById('cfgXmrHost').value = xmr.host || '';
+  document.getElementById('cfgXmrPort').value = xmr.port || '';
+  document.getElementById('cfgXmrUser').value = xmr.user || '';
+  document.getElementById('cfgXmrPass').value = xmr.pass || '';
+
+  document.getElementById('settingsOverlay').classList.add('open');
+}
+
+function closeSettings() {
+  document.getElementById('settingsOverlay').classList.remove('open');
+}
+
+function closeIfOutside(e) {
+  if (e.target === e.currentTarget) closeSettings();
+}
+
+async function saveSettings() {
+  const payload = {
+    org_id: document.getElementById('cfgOrgId').value.trim(),
+    api_key: document.getElementById('cfgApiKey').value.trim(),
+    pools: {
+      EQUIHASH: {
+        host: document.getElementById('cfgZecHost').value.trim(),
+        port: document.getElementById('cfgZecPort').value.trim(),
+        user: document.getElementById('cfgZecUser').value.trim(),
+        pass: document.getElementById('cfgZecPass').value.trim(),
+      },
+      RANDOMXMONERO: {
+        host: document.getElementById('cfgXmrHost').value.trim(),
+        port: document.getElementById('cfgXmrPort').value.trim(),
+        user: document.getElementById('cfgXmrUser').value.trim(),
+        pass: document.getElementById('cfgXmrPass').value.trim(),
+      },
+    },
+  };
+
+  const secret = document.getElementById('cfgApiSecret').value.trim();
+  if (secret) payload.api_secret = secret;
+
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      config = { ...config, ...payload };
+      // Update pool display
+      updatePoolDisplay();
+      showToast('Settings saved', 'success');
+      closeSettings();
+      if (config.api_key) loadMyOrders();
+    } else {
+      showToast('Save failed', 'error');
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+}
+
+function updatePoolDisplay() {
+  // pool field removed; no-op kept for call-site compatibility
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, 4000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+async function init() {
+  // Load config
+  try {
+    const r = await fetch('/api/config');
+    config = await r.json();
+    updatePoolDisplay();
+    if (config.api_key) loadMyOrders();
+  } catch {}
+
+  // Try to get initial data via REST while WS connects
+  try {
+    const r = await fetch('/api/live');
+    if (r.ok) {
+      live = await r.json();
+      updateUI();
+      fetchBothOrderbooks();
+    }
+  } catch {}
+
+  connectWS();
+  setInterval(fetchBothOrderbooks, 15_000);
+}
+
+init();
+</script>
+</body>
+</html>

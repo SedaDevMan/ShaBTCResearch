@@ -1,0 +1,22 @@
+[
+  {
+    "test": "bit_correlation",
+    "N_pairs": 77837,
+    "corr": 0.012134022200115576,
+    "pvalue": 0.5,
+    "null_mean": 0.012381734782279651,
+    "p_uniform": 0.8644616688276332,
+    "verdict": "noise"
+  },
+  {
+    "test": "cbranch_timing",
+    "n_winners": 3932,
+    "winner_branch_mean": 0.0,
+    "loser_branch_mean": 0.0,
+    "p_ttest": NaN,
+    "pearson_r": 0.0,
+    "pearson_p": 1.0,
+    "p_chi_bc": 1.0,
+    "verdict": "noise"
+  }
+]
