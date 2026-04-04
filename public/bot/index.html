@@ -256,6 +256,55 @@
     </table>
   </div>
 
+  <!-- NiceHash Credentials -->
+  <div class="panel">
+    <h2>NiceHash API Credentials</h2>
+    <div class="creds-grid">
+      <div class="field" style="grid-column:1/-1;">
+        <label>Organization ID</label>
+        <input type="text" id="nhOrgId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input type="text" id="nhApiKey" placeholder="NiceHash API key" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>API Secret</label>
+        <input type="password" id="nhApiSecret" placeholder="NiceHash API secret" autocomplete="off">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-blue" id="btnSaveNH">Save NiceHash Credentials</button>
+    </div>
+  </div>
+
+  <!-- ZEC Mining Pool -->
+  <div class="panel">
+    <h2>ZEC Mining Pool (EQUIHASH)</h2>
+    <div class="creds-grid">
+      <div class="field" style="grid-column:1/-1;">
+        <label>Pool Host</label>
+        <input type="text" id="poolHost" placeholder="zec.2miners.com">
+      </div>
+      <div class="field">
+        <label>Port</label>
+        <input type="number" id="poolPort" placeholder="2020">
+      </div>
+      <div class="field">
+        <label>Username / Wallet address</label>
+        <input type="text" id="poolUser" placeholder="t1YourZecAddress.rig1">
+      </div>
+      <div class="field" style="grid-column:1/-1;">
+        <label>Password</label>
+        <input type="text" id="poolPass" placeholder="x" value="x">
+        <p class="info-text">Usually just <code style="color:#94a3b8;">x</code>. The pool receives ZEC from NiceHash miners via stratum.</p>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-blue" id="btnSavePool">Save Pool Settings</button>
+    </div>
+  </div>
+
   <!-- Binance Credentials -->
   <div class="panel">
     <h2>Binance Credentials</h2>
@@ -385,6 +434,22 @@ function escHtml(s) {
 }
 
 // ── Load config & log on page load ───────────────────────────────────────────
+async function loadNHConfig() {
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) return;
+    const cfg = await r.json();
+    document.getElementById('nhOrgId').value  = cfg.org_id  || '';
+    document.getElementById('nhApiKey').value = cfg.api_key || '';
+    // api_secret never returned — leave blank
+    const zec = cfg.pools?.EQUIHASH || {};
+    document.getElementById('poolHost').value = zec.host || '';
+    document.getElementById('poolPort').value = zec.port || '';
+    document.getElementById('poolUser').value = zec.user || '';
+    document.getElementById('poolPass').value = zec.pass || 'x';
+  } catch {}
+}
+
 async function loadConfig() {
   const r = await fetch('/api/bot/config');
   if (!r.ok) return;
@@ -501,6 +566,32 @@ document.getElementById('btnSave').onclick = async () => {
   cfgState = { ...cfgState, ...body };
 };
 
+document.getElementById('btnSaveNH').onclick = async () => {
+  const body = { org_id: document.getElementById('nhOrgId').value.trim(), api_key: document.getElementById('nhApiKey').value.trim() };
+  const secret = document.getElementById('nhApiSecret').value.trim();
+  if (secret) body.api_secret = secret;
+  const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json();
+  if (d.ok) { alert('NiceHash credentials saved'); document.getElementById('nhApiSecret').value = ''; }
+  else alert('Error: ' + JSON.stringify(d));
+};
+
+document.getElementById('btnSavePool').onclick = async () => {
+  const body = {
+    pools: {
+      EQUIHASH: {
+        host: document.getElementById('poolHost').value.trim(),
+        port: document.getElementById('poolPort').value.trim(),
+        user: document.getElementById('poolUser').value.trim(),
+        pass: document.getElementById('poolPass').value.trim() || 'x',
+      },
+    },
+  };
+  const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json();
+  d.ok ? alert('Pool settings saved') : alert('Error: ' + JSON.stringify(d));
+};
+
 document.getElementById('btnSaveCreds').onclick = async () => {
   const body = {
     binance: {
@@ -537,6 +628,7 @@ document.getElementById('btnSweep').onclick = async () => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadConfig();
+loadNHConfig();
 loadLog();
 loadStatus();
 wsConnect();
