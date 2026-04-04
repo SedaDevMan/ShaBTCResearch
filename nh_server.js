@@ -12,7 +12,11 @@ const https = require('https');
 const PORT = 55560;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const CONFIG_FILE = path.join(__dirname, 'nh_config.json');
+const BOT_CONFIG_FILE = path.join(__dirname, 'bot_config.json');
 const REFRESH_INTERVAL = 30_000;
+const BOT_CYCLE_INTERVAL = 60_000;
+
+const BINANCE_API = 'https://api.binance.com';
 
 const NH_API = 'https://api2.nicehash.com';
 
@@ -20,8 +24,8 @@ const ALGO_CONFIG = {
   EQUIHASH: {
     coin: 'zec',
     blocks_per_day: 86400 / 75,   // 1152
-    reward: 1.375,
-    halving_block: 3_360_000,
+    reward: 1.375,                // verified on-chain via Blockchair (137,500,000 zatoshis)
+    halving_block: 4_406_400,     // 3rd halving ~Nov 2028 (ZIP-208: 1st=1,046,400 2nd=2,726,400 3rd=4,406,400)
   },
   RANDOMXMONERO: {
     coin: 'xmr',
@@ -35,6 +39,10 @@ const ALGO_CONFIG = {
 let liveCache = null;
 let orderbooks = {};
 let config = loadConfig();
+let botConfig = loadBotConfig();
+let botLog = [];       // last 200 entries
+let botStatus = { enabled: false, slots_active: 0, last_cycle: null, nh_btc: null, binance_zec: null, binance_usdc: null };
+let botTimer = null;
 
 // ── Config I/O ────────────────────────────────────────────────────────────
 function loadConfig() {
@@ -51,6 +59,313 @@ function saveConfig(data) {
   fs.chmodSync(CONFIG_FILE, 0o600);
   config = merged;
 }
+
+// ── Bot Config I/O ────────────────────────────────────────────────────────
+function loadBotConfig() {
+  const defaults = {
+    enabled: false, max_slots: 3, min_arb_ratio: 1.15, wait_for_arb: true,
+    bid_strategy: 'cheapest_profitable', max_bid_usd: 26000,
+    order_amount_btc: '0.001', order_limit_gsol: 0.003, zec_ops_pct: 30, nh_btc_threshold: 0.005,
+    binance: { api_key: '', api_secret: '', zec_address: '' },
+  };
+  // NH platform minimums (from GET /main/api/v2/public/buy/info)
+  // minAmount = 0.001 BTC, minLimit = 0.003 GSol/s for EQUIHASH
+  try {
+    if (fs.existsSync(BOT_CONFIG_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(BOT_CONFIG_FILE, 'utf8'));
+      return { ...defaults, ...saved, binance: { ...defaults.binance, ...saved.binance } };
+    }
+  } catch {}
+  return defaults;
+}
+
+function saveBotConfig(data) {
+  const merged = {
+    ...botConfig, ...data,
+    binance: { ...botConfig.binance, ...(data.binance || {}) },
+  };
+  fs.writeFileSync(BOT_CONFIG_FILE, JSON.stringify(merged, null, 2));
+  fs.chmodSync(BOT_CONFIG_FILE, 0o600);
+  botConfig = merged;
+}
+
+function safeBotConfig() {
+  const c = { ...botConfig, binance: { ...botConfig.binance } };
+  delete c.binance.api_secret;
+  return c;
+}
+
+// ── Bot logger ────────────────────────────────────────────────────────────
+function botLogEntry(msg) {
+  const entry = { ts: new Date().toISOString(), msg };
+  botLog.push(entry);
+  if (botLog.length > 200) botLog.shift();
+  console.log(`[bot] ${msg}`);
+  broadcast({ type: 'bot_log', entry });
+}
+
+// ── Binance REST helper ────────────────────────────────────────────────────
+function binanceRequest(method, path, params = {}, signed = true) {
+  const key    = botConfig.binance.api_key;
+  const secret = botConfig.binance.api_secret;
+  if (signed && (!key || !secret)) return Promise.reject(new Error('No Binance credentials'));
+
+  const p = { ...params };
+  if (signed) p.timestamp = Date.now();
+
+  const qs = new URLSearchParams(p).toString();
+  let fullQs = qs;
+  if (signed) {
+    const sig = crypto.createHmac('sha256', secret).update(qs).digest('hex');
+    fullQs = `${qs}&signature=${sig}`;
+  }
+
+  const isPost = method.toUpperCase() === 'POST';
+  const urlPath = isPost ? path : `${path}?${fullQs}`;
+  const parsed = new URL(`${BINANCE_API}${urlPath}`);
+
+  const options = {
+    hostname: parsed.hostname,
+    path: parsed.pathname + parsed.search,
+    method: method.toUpperCase(),
+    headers: {
+      'User-Agent': 'shabtc-bot/1.0',
+      'X-MBX-APIKEY': key,
+      ...(isPost ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
+    },
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, res => {
+      let data = '';
+      res.on('data', d => data += d);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch (e) { reject(new Error(`Binance parse error: ${e.message} body=${data.slice(0,200)}`)); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15_000, () => { req.destroy(); reject(new Error('Binance timeout')); });
+    if (isPost) req.write(fullQs);
+    req.end();
+  });
+}
+
+// ── NH ZEC deposit address ─────────────────────────────────────────────────
+async function getNHZecDepositAddress() {
+  const result = await nhRequest('GET', '/main/api/v2/accounting/depositAddresses', 'currency=ZEC');
+  if (result.status !== 200) throw new Error(`NH deposit addr error: ${JSON.stringify(result.body)}`);
+  const list = result.body.list || result.body.depositAddresses || [];
+  const entry = list.find(a => a.currency === 'ZEC' || a.coin === 'ZEC');
+  if (!entry) throw new Error('ZEC deposit address not found in NH response');
+  return entry.address || entry.depositAddress;
+}
+
+// ── Bot cycle ─────────────────────────────────────────────────────────────
+async function runBotCycle() {
+  botLogEntry('cycle start');
+  try {
+    const cfg = botConfig;
+    if (!liveCache) { botLogEntry('cycle skip: no live data yet'); return; }
+
+    // Fetch NH BTC balance, NH active bot orders, Binance ZEC balance in parallel
+    const [nhBtcRes, nhOrdersRes, bnAccRes] = await Promise.allSettled([
+      nhRequest('GET', '/main/api/v2/accounting/balance', 'currency=BTC'),
+      nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&status=ACTIVE&size=100&page=0'),
+      binanceRequest('GET', '/api/v3/account', {}),
+    ]);
+
+    const nhBtc = nhBtcRes.status === 'fulfilled' && nhBtcRes.value.status === 200
+      ? parseFloat(nhBtcRes.value.body.available || nhBtcRes.value.body.balance || 0)
+      : null;
+
+    const allNhOrders = nhOrdersRes.status === 'fulfilled' && nhOrdersRes.value.status === 200
+      ? (nhOrdersRes.value.body.list || [])
+      : [];
+    const botOrders = allNhOrders.filter(o => o.note === 'shabtc-bot');
+
+    let bnZec = 0, bnUsdc = 0;
+    if (bnAccRes.status === 'fulfilled' && bnAccRes.value.status === 200) {
+      const balances = bnAccRes.value.body.balances || [];
+      const zecAsset  = balances.find(b => b.asset === 'ZEC');
+      const usdcAsset = balances.find(b => b.asset === 'USDC');
+      bnZec  = parseFloat(zecAsset?.free  || 0);
+      bnUsdc = parseFloat(usdcAsset?.free || 0);
+    } else if (bnAccRes.status === 'rejected') {
+      botLogEntry(`Binance account fetch error: ${bnAccRes.reason?.message || bnAccRes.reason}`);
+    }
+
+    botStatus = {
+      enabled: cfg.enabled,
+      slots_active: botOrders.length,
+      last_cycle: new Date().toISOString(),
+      nh_btc:      nhBtc,
+      binance_zec:  bnZec,
+      binance_usdc: bnUsdc,
+    };
+
+    botLogEntry(`status: NH BTC=${nhBtc ?? 'n/a'} Binance ZEC=${bnZec} USDC=${bnUsdc} slots=${botOrders.length}/${cfg.max_slots}`);
+
+    const arb = liveCache.zec_arb?.arb_ratio || 0;
+
+    // ── Order management ──
+    if (arb < 1.0 && botOrders.length > 0) {
+      botLogEntry(`arb=${arb.toFixed(4)} < 1.0 — cancelling ${botOrders.length} bot order(s)`);
+      for (const o of botOrders) {
+        try {
+          await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
+          botLogEntry(`cancelled order ${o.id}`);
+        } catch (e) {
+          botLogEntry(`cancel error ${o.id}: ${e.message}`);
+        }
+      }
+    } else if (arb < cfg.min_arb_ratio && cfg.wait_for_arb) {
+      botLogEntry(`waiting for arb ≥ ${cfg.min_arb_ratio}× (current ${arb.toFixed(4)}×)`);
+    } else if (arb >= cfg.min_arb_ratio && botOrders.length < cfg.max_slots) {
+      // Place new order
+      const slots_needed = cfg.max_slots - botOrders.length;
+      for (let i = 0; i < slots_needed; i++) {
+        try {
+          await placeBotOrder(cfg, arb);
+        } catch (e) {
+          botLogEntry(`order placement error: ${e.message}`);
+          break;
+        }
+      }
+    }
+
+    // ── Funding check (NH BTC low) ──
+    if (nhBtc !== null && nhBtc < cfg.nh_btc_threshold && bnZec > 0.01) {
+      await fundNiceHash(cfg, bnZec);
+    }
+
+    // ── Profit sweep (remaining ZEC → USDC) ──
+    // Refresh ZEC balance after possible funding withdrawal
+    if (bnZec > 0.01) {
+      const opsZec = bnZec * (cfg.zec_ops_pct / 100);
+      const profitZec = bnZec - opsZec;
+      if (profitZec > 0.005) {
+        await sweepProfitZec(profitZec);
+      }
+    }
+
+  } catch (e) {
+    botLogEntry(`cycle error: ${e.message}`);
+  }
+  botLogEntry('cycle end');
+  broadcastBotStatus();
+}
+
+async function placeBotOrder(cfg, arb) {
+  const pool = config.pools && config.pools.EQUIHASH;
+  if (!pool) throw new Error('No EQUIHASH pool configured in nh_config.json');
+
+  const btcPrice = liveCache.prices.btc;
+  const eqMkt   = liveCache.nh_market.EQUIHASH;
+
+  // bid = cheapest profitable price: market price minus a small buffer (~$100 / btcPrice)
+  const bufferBtc = 100 / btcPrice;
+  const bidBtc = Math.max(0, eqMkt.btc - bufferBtc);
+
+  if (bidBtc * btcPrice > cfg.max_bid_usd) {
+    botLogEntry(`bid $${(bidBtc * btcPrice).toFixed(0)} > max_bid_usd $${cfg.max_bid_usd} — skipping`);
+    return;
+  }
+
+  // Configurable hashrate limit — higher = faster cycle, lower timing risk.
+  // Estimated cycle hours = (order_amount_btc / (limit_gsol × bid_btc)) / 24h
+  // NH platform minimums: minAmount=0.001 BTC, minLimit=0.003 GSol/s (EQUIHASH)
+  const NH_MIN_AMOUNT = 0.001;
+  const NH_MIN_LIMIT  = 0.003;
+  const limitGsol   = Math.max(NH_MIN_LIMIT, cfg.order_limit_gsol || NH_MIN_LIMIT);
+  const amountBtc   = Math.max(NH_MIN_AMOUNT, parseFloat(cfg.order_amount_btc));
+  const costPerDay  = limitGsol * bidBtc;  // BTC/day at full limit
+  const cycleHours  = costPerDay > 0 ? +(amountBtc / costPerDay * 24).toFixed(1) : '?';
+
+  const body = JSON.stringify({
+    market:       'EU',
+    algorithm:    { algorithm: 'EQUIHASH' },
+    amount:       cfg.order_amount_btc,
+    price:        bidBtc.toFixed(8),
+    limit:        limitGsol.toString(),
+    type:         'STANDARD',
+    poolHostname: pool.host,
+    poolPort:     parseInt(pool.port),
+    username:     pool.user,
+    password:     pool.pass || 'x',
+    note:         'shabtc-bot',
+  });
+
+  const result = await nhRequest('POST', '/main/api/v2/hashpower/order', '', body);
+  if (result.status === 200 || result.status === 201) {
+    const id = result.body.id || '?';
+    botLogEntry(`placed order ${id} bid=${bidBtc.toFixed(8)} BTC ($${(bidBtc*btcPrice).toFixed(0)}/GSol/day) limit=${limitGsol} GSol/s amount=${cfg.order_amount_btc} BTC ~${cycleHours}h cycle`);
+  } else {
+    throw new Error(`NH order failed ${result.status}: ${JSON.stringify(result.body)}`);
+  }
+}
+
+async function fundNiceHash(cfg, bnZec) {
+  try {
+    const nhZecAddr = await getNHZecDepositAddress();
+    const opsZec = +(bnZec * (cfg.zec_ops_pct / 100)).toFixed(8);
+
+    botLogEntry(`NH BTC low — sending ${opsZec} ZEC to NiceHash deposit address (~$0.12 fee)`);
+
+    const wdResult = await binanceRequest('POST', '/sapi/v1/capital/withdraw/apply', {
+      coin: 'ZEC', network: 'ZEC', address: nhZecAddr, amount: opsZec,
+    });
+    if (wdResult.status === 200) {
+      botLogEntry(`Binance ZEC withdrawal submitted: ${opsZec} ZEC → ${nhZecAddr.slice(0, 12)}… id=${wdResult.body.id}`);
+    } else {
+      botLogEntry(`Binance ZEC withdrawal error: ${JSON.stringify(wdResult.body)}`);
+    }
+  } catch (e) {
+    botLogEntry(`fundNiceHash error: ${e.message}`);
+  }
+}
+
+async function sweepProfitZec(profitZec) {
+  try {
+    const result = await binanceRequest('POST', '/api/v3/order', {
+      symbol: 'ZECUSDC', side: 'SELL', type: 'MARKET', quantity: profitZec.toFixed(8),
+    });
+    if (result.status === 200 || result.status === 201) {
+      const fills = result.body.fills || [];
+      const totalUsdc = fills.reduce((s, f) => s + parseFloat(f.price || 0) * parseFloat(f.qty || 0), 0);
+      botLogEntry(`Converted ${profitZec.toFixed(4)} ZEC → $${totalUsdc.toFixed(2)} USDC (profit sweep)`);
+    } else {
+      botLogEntry(`ZEC→USDC sweep error: ${JSON.stringify(result.body)}`);
+    }
+  } catch (e) {
+    botLogEntry(`sweepProfitZec error: ${e.message}`);
+  }
+}
+
+function broadcastBotStatus() {
+  broadcast({ type: 'bot_status', data: botStatus });
+}
+
+function startBot() {
+  if (botTimer) clearInterval(botTimer);
+  botConfig.enabled = true;
+  saveBotConfig({ enabled: true });
+  botLogEntry('Bot started');
+  runBotCycle();
+  botTimer = setInterval(runBotCycle, BOT_CYCLE_INTERVAL);
+}
+
+function stopBot() {
+  botConfig.enabled = false;
+  saveBotConfig({ enabled: false });
+  if (botTimer) { clearInterval(botTimer); botTimer = null; }
+  botStatus.enabled = false;
+  botLogEntry('Bot stopped');
+  broadcastBotStatus();
+}
+
+// Auto-start bot if it was enabled when server last ran
+if (botConfig.enabled) startBot();
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────
 function fetchJSON(url) {
@@ -323,7 +638,7 @@ async function refresh() {
       },
     };
 
-    broadcast({ type: 'live', data: liveCache });
+    broadcast({ type: 'live', data: { ...liveCache, bot: { enabled: botStatus.enabled, slots_active: botStatus.slots_active, last_cycle: botStatus.last_cycle, nh_btc: botStatus.nh_btc, binance_zec: botStatus.binance_zec, binance_usdc: botStatus.binance_usdc } } });
     console.log(`[refresh] BTC=$${btcPrice} ZEC=$${zecPrice} XMR=$${xmrPrice} ZEC_arb=${zecArb?.arb_ratio} (${zecArb?.data_quality}) XMR_arb=${xmrArb?.arb_ratio} (${xmrArb?.data_quality})`);
   } catch (e) {
     console.error('[refresh] error:', e.message);
@@ -390,6 +705,98 @@ app.post('/api/config', (req, res) => {
   }
 });
 
+// ── Bot endpoints ─────────────────────────────────────────────────────────
+app.get('/api/bot/status', async (req, res) => {
+  // Also fetch live NH active bot orders for the UI
+  try {
+    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&status=ACTIVE&size=100&page=0');
+    const orders = result.status === 200
+      ? (result.body.list || []).filter(o => o.note === 'shabtc-bot')
+      : [];
+    const btcPrice = liveCache?.prices?.btc || 0;
+    const enriched = orders.map(o => ({
+      id:       o.id,
+      market:   o.market || '?',
+      bid_btc:  parseFloat(o.price || 0),
+      bid_usd:  +(parseFloat(o.price || 0) * btcPrice).toFixed(2),
+      speed:    parseFloat(o.acceptedCurrentSpeed || 0),
+      alive:    o.alive,
+    }));
+    res.json({ ...botStatus, orders: enriched });
+  } catch (e) {
+    res.json({ ...botStatus, orders: [], error: e.message });
+  }
+});
+
+app.get('/api/bot/config', (req, res) => {
+  res.json(safeBotConfig());
+});
+
+app.post('/api/bot/config', (req, res) => {
+  try {
+    saveBotConfig(req.body);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/bot/start', (req, res) => {
+  startBot();
+  res.json({ ok: true, enabled: true });
+});
+
+app.post('/api/bot/stop', async (req, res) => {
+  stopBot();
+  if (req.body && req.body.cancel_orders) {
+    try {
+      const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&status=ACTIVE&size=100&page=0');
+      const orders = result.status === 200 ? (result.body.list || []).filter(o => o.note === 'shabtc-bot') : [];
+      for (const o of orders) {
+        await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`).catch(() => {});
+      }
+      botLogEntry(`Cancelled ${orders.length} bot orders on stop`);
+    } catch (e) {
+      botLogEntry(`cancel on stop error: ${e.message}`);
+    }
+  }
+  res.json({ ok: true, enabled: false });
+});
+
+app.get('/api/bot/log', (req, res) => {
+  res.json({ entries: botLog.slice(-200) });
+});
+
+app.post('/api/bot/topup', async (req, res) => {
+  try {
+    const bnAccRes = await binanceRequest('GET', '/api/v3/account', {});
+    const balances = bnAccRes.body.balances || [];
+    const bnZec = parseFloat((balances.find(b => b.asset === 'ZEC') || {}).free || 0);
+    await fundNiceHash(botConfig, bnZec);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/bot/sweep', async (req, res) => {
+  try {
+    const bnAccRes = await binanceRequest('GET', '/api/v3/account', {});
+    const balances = bnAccRes.body.balances || [];
+    const bnZec = parseFloat((balances.find(b => b.asset === 'ZEC') || {}).free || 0);
+    const opsZec   = bnZec * (botConfig.zec_ops_pct / 100);
+    const profitZec = bnZec - opsZec;
+    if (profitZec > 0.005) {
+      await sweepProfitZec(profitZec);
+      res.json({ ok: true, swept_zec: profitZec });
+    } else {
+      res.json({ ok: false, msg: 'Not enough ZEC to sweep', bnZec });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── HTTP + WebSocket server ───────────────────────────────────────────────
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -402,7 +809,7 @@ function broadcast(msg) {
 }
 
 wss.on('connection', ws => {
-  if (liveCache) ws.send(JSON.stringify({ type: 'live', data: liveCache }));
+  if (liveCache) ws.send(JSON.stringify({ type: 'live', data: { ...liveCache, bot: { enabled: botStatus.enabled, slots_active: botStatus.slots_active, last_cycle: botStatus.last_cycle, nh_btc: botStatus.nh_btc, binance_zec: botStatus.binance_zec, binance_usdc: botStatus.binance_usdc } } }));
   ws.on('message', raw => {
     try {
       const msg = JSON.parse(raw.toString());
@@ -416,6 +823,7 @@ server.listen(PORT, () => {
   console.log(`shabtc NiceHash dashboard listening on http://0.0.0.0:${PORT}`);
   console.log(`  Landing:   http://localhost:${PORT}/`);
   console.log(`  Dashboard: http://localhost:${PORT}/nicehash/`);
+  console.log(`  Bot:       http://localhost:${PORT}/bot/`);
   console.log(`  API live:  http://localhost:${PORT}/api/live`);
 });
 

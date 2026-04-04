@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>shabtc — Mining Bot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #060d1b;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    nav {
+      background: #0d1829;
+      border-bottom: 1px solid #1a2744;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    nav .brand { font-weight: 700; color: #3b82f6; font-size: 1rem; }
+    nav .breadcrumb { color: #64748b; font-size: 0.85rem; }
+    nav .ws-badge {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+    }
+    .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; display: inline-block; }
+    .ws-dot.connected { background: #22c55e; }
+    .page { max-width: 1100px; margin: 0 auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+
+    /* Status bar */
+    .status-bar {
+      background: #0d1829;
+      border: 1px solid #1a2744;
+      border-radius: 10px;
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      align-items: center;
+    }
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+    }
+    .status-pill .label { color: #64748b; }
+    .status-pill .value { font-weight: 600; }
+    .running-badge { background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.3); padding: 0.15rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+    .stopped-badge { background: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); padding: 0.15rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+
+    /* Panel */
+    .panel {
+      background: #0d1829;
+      border: 1px solid #1a2744;
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+    .panel h2 { font-size: 0.9rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 1rem; }
+
+    /* Controls */
+    .controls-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem 1.5rem; align-items: end; }
+    .field { display: flex; flex-direction: column; gap: 0.3rem; }
+    .field label { font-size: 0.78rem; color: #94a3b8; }
+    .field input[type=text], .field input[type=number], .field select {
+      background: #060d1b;
+      border: 1px solid #1a2744;
+      border-radius: 6px;
+      color: #e2e8f0;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.88rem;
+      width: 100%;
+      outline: none;
+    }
+    .field input:focus, .field select:focus { border-color: #3b82f6; }
+    .field .check-row { display: flex; align-items: center; gap: 0.5rem; padding-top: 0.2rem; }
+    .field .check-row input[type=checkbox] { accent-color: #3b82f6; width: 16px; height: 16px; }
+    .field .check-row label { font-size: 0.88rem; color: #e2e8f0; cursor: pointer; }
+
+    .btn-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem; }
+    button {
+      padding: 0.5rem 1.2rem;
+      border-radius: 6px;
+      border: none;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-green  { background: #22c55e; color: #000; }
+    .btn-red    { background: #ef4444; color: #fff; }
+    .btn-blue   { background: #3b82f6; color: #fff; }
+    .btn-gray   { background: #1e293b; color: #94a3b8; border: 1px solid #1a2744; }
+    .btn-amber  { background: #f59e0b; color: #000; }
+
+    /* Orders table */
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th { text-align: left; color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.5rem 0.75rem; border-bottom: 1px solid #1a2744; }
+    td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #0f1e36; }
+    tr:last-child td { border-bottom: none; }
+    .profit-pos { color: #22c55e; font-weight: 600; }
+    .profit-neg { color: #ef4444; }
+    .empty-row td { color: #475569; text-align: center; padding: 1.5rem; }
+
+    /* Log */
+    #log-container {
+      background: #060d1b;
+      border: 1px solid #1a2744;
+      border-radius: 6px;
+      height: 240px;
+      overflow-y: auto;
+      padding: 0.75rem;
+      font-size: 0.8rem;
+      font-family: 'Courier New', monospace;
+    }
+    .log-entry { color: #94a3b8; padding: 0.1rem 0; line-height: 1.4; }
+    .log-entry .ts { color: #475569; margin-right: 0.5rem; }
+    .log-entry.fresh { color: #e2e8f0; animation: fadeLog 3s ease forwards; }
+    @keyframes fadeLog { 0%,30% { color: #86efac; } 100% { color: #94a3b8; } }
+
+    /* Credentials */
+    .creds-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1.5rem; }
+    @media (max-width: 600px) { .creds-grid { grid-template-columns: 1fr; } }
+
+    .info-text { font-size: 0.78rem; color: #64748b; margin-top: 0.4rem; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">shabtc</span>
+  <span class="breadcrumb">/ <a href="/" style="color:#64748b;text-decoration:none;">Home</a> / Bot</span>
+  <span class="ws-badge">
+    <span class="ws-dot" id="wsDot"></span>
+    <span id="wsLabel">connecting…</span>
+  </span>
+</nav>
+
+<div class="page">
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="status-pill">
+      <span class="label">Bot:</span>
+      <span id="statusBadge" class="stopped-badge">● STOPPED</span>
+    </div>
+    <div class="status-pill">
+      <span class="label">Slots:</span>
+      <span class="value" id="slotsVal">–/–</span>
+    </div>
+    <div class="status-pill">
+      <span class="label">Arb:</span>
+      <span class="value" id="arbVal">–</span>
+    </div>
+    <div class="status-pill">
+      <span class="label">NH BTC:</span>
+      <span class="value" id="nhBtcVal">–</span>
+    </div>
+    <div class="status-pill">
+      <span class="label">Binance ZEC:</span>
+      <span class="value" id="bnZecVal">–</span>
+    </div>
+    <div class="status-pill">
+      <span class="label">USDC:</span>
+      <span class="value" id="bnUsdcVal">–</span>
+    </div>
+    <div class="status-pill" style="margin-left:auto;">
+      <span class="label">Last cycle:</span>
+      <span class="value" id="lastCycleVal" style="font-size:0.78rem;">–</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="panel">
+    <h2>Controls &amp; Config</h2>
+    <div class="controls-grid">
+      <div class="field">
+        <label>Max Slots</label>
+        <input type="number" id="cfgMaxSlots" min="1" max="10" value="3">
+      </div>
+      <div class="field">
+        <label>Min Arb Ratio (≥1.0)</label>
+        <input type="number" id="cfgMinArb" step="0.01" min="1.0" value="1.10">
+      </div>
+      <div class="field">
+        <label>Wait for Arb</label>
+        <div class="check-row">
+          <input type="checkbox" id="cfgWaitArb" checked>
+          <label for="cfgWaitArb">Hold when arb &lt; threshold</label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Bid Strategy</label>
+        <select id="cfgBidStrategy">
+          <option value="cheapest_profitable">Cheapest Profitable</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Order BTC Amount <span style="color:#475569;font-weight:400;">(min 0.001)</span></label>
+        <input type="number" id="cfgOrderBtc" step="0.001" min="0.001" value="0.001">
+        <p class="info-text">NH hard floor: 0.001 BTC. Cannot place smaller orders.</p>
+      </div>
+      <div class="field">
+        <label>Hashrate Limit (GSol/s) <span id="cycleDurHint" style="color:#f59e0b;font-weight:600;"></span></label>
+        <input type="number" id="cfgLimitGsol" step="0.001" min="0.003" value="0.003">
+        <p class="info-text">NH minimum: 0.003 GSol/s. Higher = faster cycle = less timing risk.</p>
+      </div>
+      <div class="field">
+        <label>Max Bid USD/GSol/day</label>
+        <input type="number" id="cfgMaxBid" value="26000">
+      </div>
+      <div class="field">
+        <label>ZEC Ops % (to NiceHash)</label>
+        <input type="number" id="cfgZecOps" min="1" max="100" value="30">
+      </div>
+      <div class="field">
+        <label>NH BTC Top-up Threshold</label>
+        <input type="number" id="cfgNhThreshold" step="0.001" value="0.01">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-green" id="btnStart">▶ START BOT</button>
+      <button class="btn-red"   id="btnStop">■ STOP BOT</button>
+      <button class="btn-blue"  id="btnSave">Save Config</button>
+      <button class="btn-amber" id="btnTopup">Force Top-up</button>
+      <button class="btn-gray"  id="btnSweep">Force Sweep</button>
+    </div>
+  </div>
+
+  <!-- Active Orders -->
+  <div class="panel">
+    <h2>Active Bot Orders <span id="ordersRefreshNote" style="font-weight:400;font-size:0.72rem;color:#475569;">(refreshes every 15s)</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Market</th>
+          <th>Bid USD/GSol/day</th>
+          <th>Speed (GSol/s)</th>
+          <th>Alive</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="ordersBody">
+        <tr class="empty-row"><td colspan="6">No active bot orders</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Binance Credentials -->
+  <div class="panel">
+    <h2>Binance Credentials</h2>
+    <div class="creds-grid">
+      <div class="field">
+        <label>API Key</label>
+        <input type="text" id="bnKey" placeholder="Binance API key" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>API Secret</label>
+        <input type="text" id="bnSecret" placeholder="Binance API secret" autocomplete="off">
+      </div>
+      <div class="field" style="grid-column:1/-1;">
+        <label>Binance ZEC Deposit Address (set as 2Miners payout address)</label>
+        <input type="text" id="bnZecAddr" placeholder="t1… (your Binance ZEC deposit address)">
+        <p class="info-text">Copy this address into your 2Miners account as the payout address. ZEC mining rewards will arrive here automatically.</p>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-blue" id="btnSaveCreds">Save Binance Credentials</button>
+    </div>
+  </div>
+
+  <!-- Activity Log -->
+  <div class="panel">
+    <h2>Activity Log</h2>
+    <div id="log-container"><p class="log-entry" style="color:#475569;">Waiting for log entries…</p></div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+const PORT = location.port || 80;
+const WS_URL = `ws://${location.hostname}:${PORT}/ws`;
+let ws, wsRetry = 0;
+let cfgState = {};
+let liveArb = null;
+
+// ── WebSocket ───────────────────────────────────────────────────────────────
+function wsConnect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    document.getElementById('wsDot').className = 'ws-dot connected';
+    document.getElementById('wsLabel').textContent = 'connected';
+    wsRetry = 0;
+  };
+  ws.onclose = () => {
+    document.getElementById('wsDot').className = 'ws-dot';
+    document.getElementById('wsLabel').textContent = 'reconnecting…';
+    setTimeout(wsConnect, Math.min(30000, 1000 * 2 ** wsRetry++));
+  };
+  ws.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'live')       handleLive(msg.data);
+      if (msg.type === 'bot_status') updateStatusBar(msg.data);
+      if (msg.type === 'bot_log')    appendLog(msg.entry);
+    } catch {}
+  };
+}
+
+// ── Cycle duration hint ───────────────────────────────────────────────────────
+function updateCycleHint() {
+  const amountBtc  = parseFloat(document.getElementById('cfgOrderBtc').value) || 0;
+  const limitGsol  = parseFloat(document.getElementById('cfgLimitGsol').value) || 0;
+  const bidUsd     = parseFloat(document.getElementById('cfgMaxBid').value) || 26000;
+  const hint       = document.getElementById('cycleDurHint');
+  // estimate using max_bid_usd as a proxy for bid (conservative = longest cycle)
+  // cycle_hours = amount_btc / (limit_gsol * bid_btc) * 24
+  // bid_btc ≈ bidUsd / btcPrice; use liveArb-derived market if available
+  const btcPriceEl = document.getElementById('nhBtcVal');
+  // Use NH market BTC price from status bar if available
+  const arbEl = document.getElementById('arbVal').textContent;
+  // Fall back to a rough estimate with max_bid_usd
+  if (amountBtc > 0 && limitGsol > 0 && bidUsd > 0) {
+    // We don't have btcPrice in JS scope easily; compute from live data if available
+    // Use a rough estimate: at $83k BTC, bid_btc = bidUsd/83000
+    const btcEst = 83000; // rough — good enough for the hint
+    const bidBtc = bidUsd / btcEst;
+    const costPerDay = limitGsol * bidBtc;
+    const hrs = costPerDay > 0 ? (amountBtc / costPerDay * 24) : 0;
+    hint.textContent = hrs > 0 ? `(~${hrs.toFixed(0)}h cycle)` : '';
+  } else {
+    hint.textContent = '';
+  }
+}
+
+// ── Live data handler ────────────────────────────────────────────────────────
+function handleLive(data) {
+  liveArb = data.zec_arb?.arb_ratio ?? null;
+  document.getElementById('arbVal').textContent = liveArb !== null ? `${liveArb.toFixed(3)}×` : '–';
+  if (data.bot) updateStatusBar(data.bot);
+}
+
+function updateStatusBar(bot) {
+  const enabled = bot.enabled;
+  const badge = document.getElementById('statusBadge');
+  badge.className = enabled ? 'running-badge' : 'stopped-badge';
+  badge.textContent = enabled ? '● RUNNING' : '● STOPPED';
+
+  const maxSlots = cfgState.max_slots || 3;
+  document.getElementById('slotsVal').textContent = `${bot.slots_active ?? '–'}/${maxSlots}`;
+  document.getElementById('nhBtcVal').textContent  = bot.nh_btc  !== null ? bot.nh_btc?.toFixed(4)  : '–';
+  document.getElementById('bnZecVal').textContent  = bot.binance_zec  !== null ? bot.binance_zec?.toFixed(4)  : '–';
+  document.getElementById('bnUsdcVal').textContent = bot.binance_usdc !== null ? `$${bot.binance_usdc?.toFixed(2)}` : '–';
+  if (bot.last_cycle) {
+    const d = new Date(bot.last_cycle);
+    document.getElementById('lastCycleVal').textContent = d.toLocaleTimeString();
+  }
+}
+
+// ── Log ──────────────────────────────────────────────────────────────────────
+const logContainer = document.getElementById('log-container');
+function appendLog(entry) {
+  const div = document.createElement('div');
+  div.className = 'log-entry fresh';
+  const ts = new Date(entry.ts).toLocaleTimeString();
+  div.innerHTML = `<span class="ts">${ts}</span>${escHtml(entry.msg)}`;
+  logContainer.appendChild(div);
+  logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Load config & log on page load ───────────────────────────────────────────
+async function loadConfig() {
+  const r = await fetch('/api/bot/config');
+  if (!r.ok) return;
+  cfgState = await r.json();
+  document.getElementById('cfgMaxSlots').value    = cfgState.max_slots ?? 3;
+  document.getElementById('cfgMinArb').value      = cfgState.min_arb_ratio ?? 1.15;
+  document.getElementById('cfgWaitArb').checked   = cfgState.wait_for_arb ?? true;
+  document.getElementById('cfgBidStrategy').value = cfgState.bid_strategy ?? 'cheapest_profitable';
+  document.getElementById('cfgOrderBtc').value    = cfgState.order_amount_btc ?? '0.001';
+  document.getElementById('cfgLimitGsol').value   = cfgState.order_limit_gsol ?? 0.003;
+  document.getElementById('cfgMaxBid').value      = cfgState.max_bid_usd ?? 26000;
+  document.getElementById('cfgZecOps').value      = cfgState.zec_ops_pct ?? 30;
+  document.getElementById('cfgNhThreshold').value = cfgState.nh_btc_threshold ?? 0.01;
+  updateCycleHint();
+  if (cfgState.binance) {
+    document.getElementById('bnKey').value     = cfgState.binance.api_key || '';
+    document.getElementById('bnZecAddr').value = cfgState.binance.zec_address || '';
+    // secret intentionally not shown
+  }
+}
+
+async function loadLog() {
+  const r = await fetch('/api/bot/log');
+  if (!r.ok) return;
+  const data = await r.json();
+  logContainer.innerHTML = '';
+  for (const e of (data.entries || [])) {
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    const ts = new Date(e.ts).toLocaleTimeString();
+    div.innerHTML = `<span class="ts">${ts}</span>${escHtml(e.msg)}`;
+    logContainer.appendChild(div);
+  }
+  logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+async function loadStatus() {
+  const r = await fetch('/api/bot/status');
+  if (!r.ok) return;
+  const data = await r.json();
+  updateStatusBar(data);
+  renderOrders(data.orders || []);
+  if (data.last_cycle) {
+    const d = new Date(data.last_cycle);
+    document.getElementById('lastCycleVal').textContent = d.toLocaleTimeString();
+  }
+}
+
+// ── Orders table ─────────────────────────────────────────────────────────────
+function renderOrders(orders) {
+  const tbody = document.getElementById('ordersBody');
+  if (!orders.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No active bot orders</td></tr>';
+    return;
+  }
+  tbody.innerHTML = orders.map((o, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${escHtml(o.market || '?')}</td>
+      <td>$${Number(o.bid_usd).toFixed(0)}</td>
+      <td>${Number(o.speed).toFixed(5)}</td>
+      <td>${o.alive ? '✅' : '❌'}</td>
+      <td><button class="btn-red" style="padding:0.25rem 0.75rem;font-size:0.78rem;" onclick="cancelOrder('${o.id}')">Cancel</button></td>
+    </tr>`).join('');
+}
+
+async function cancelOrder(id) {
+  if (!confirm(`Cancel order ${id}?`)) return;
+  const r = await fetch(`/api/order/${id}`, { method: 'DELETE' });
+  setTimeout(loadStatus, 1500);
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+document.getElementById('btnStart').onclick = async () => {
+  const r = await fetch('/api/bot/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const d = await r.json();
+  if (d.ok) { setTimeout(loadStatus, 500); setTimeout(loadLog, 2000); }
+  else alert('Error: ' + JSON.stringify(d));
+};
+
+document.getElementById('btnStop').onclick = async () => {
+  const cancelOrders = confirm('Cancel all active bot orders on NiceHash?');
+  const r = await fetch('/api/bot/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cancel_orders: cancelOrders }),
+  });
+  const d = await r.json();
+  if (d.ok) { setTimeout(loadStatus, 500); setTimeout(loadLog, 1500); }
+  else alert('Error: ' + JSON.stringify(d));
+};
+
+document.getElementById('btnSave').onclick = async () => {
+  const minArb    = parseFloat(document.getElementById('cfgMinArb').value);
+  const orderBtc  = parseFloat(document.getElementById('cfgOrderBtc').value);
+  const limitGsol = parseFloat(document.getElementById('cfgLimitGsol').value);
+  if (isNaN(minArb)    || minArb < 1.0)   { alert('Min arb ratio must be ≥ 1.0'); return; }
+  if (isNaN(orderBtc)  || orderBtc < 0.001) { alert('Order BTC amount must be ≥ 0.001 (NiceHash minimum)'); return; }
+  if (isNaN(limitGsol) || limitGsol < 0.003) { alert('Hashrate limit must be ≥ 0.003 GSol/s (NiceHash minimum for EQUIHASH)'); return; }
+  const body = {
+    max_slots:        parseInt(document.getElementById('cfgMaxSlots').value),
+    min_arb_ratio:    minArb,
+    wait_for_arb:     document.getElementById('cfgWaitArb').checked,
+    bid_strategy:     document.getElementById('cfgBidStrategy').value,
+    order_amount_btc: document.getElementById('cfgOrderBtc').value,
+    order_limit_gsol: parseFloat(document.getElementById('cfgLimitGsol').value),
+    max_bid_usd:      parseFloat(document.getElementById('cfgMaxBid').value),
+    zec_ops_pct:      parseInt(document.getElementById('cfgZecOps').value),
+    nh_btc_threshold: parseFloat(document.getElementById('cfgNhThreshold').value),
+  };
+  const r = await fetch('/api/bot/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json();
+  d.ok ? alert('Config saved') : alert('Error: ' + JSON.stringify(d));
+  cfgState = { ...cfgState, ...body };
+};
+
+document.getElementById('btnSaveCreds').onclick = async () => {
+  const body = {
+    binance: {
+      api_key:     document.getElementById('bnKey').value.trim(),
+      api_secret:  document.getElementById('bnSecret').value.trim(),
+      zec_address: document.getElementById('bnZecAddr').value.trim(),
+    },
+  };
+  const r = await fetch('/api/bot/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json();
+  if (d.ok) {
+    alert('Credentials saved');
+    document.getElementById('bnSecret').value = '';  // clear secret from DOM
+  } else {
+    alert('Error: ' + JSON.stringify(d));
+  }
+};
+
+document.getElementById('btnTopup').onclick = async () => {
+  if (!confirm('Force ZEC top-up to NiceHash now?')) return;
+  const r = await fetch('/api/bot/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const d = await r.json();
+  d.ok ? alert('Top-up initiated. Check log.') : alert('Error: ' + JSON.stringify(d));
+  setTimeout(loadLog, 1500);
+};
+
+document.getElementById('btnSweep').onclick = async () => {
+  if (!confirm('Force ZEC→USDC profit sweep now?')) return;
+  const r = await fetch('/api/bot/sweep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const d = await r.json();
+  d.ok ? alert(`Swept ${d.swept_zec?.toFixed(4)} ZEC. Check log.`) : alert('Info: ' + (d.msg || JSON.stringify(d)));
+  setTimeout(loadLog, 1500);
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadConfig();
+loadLog();
+loadStatus();
+wsConnect();
+setInterval(loadStatus, 15_000);
+document.getElementById('cfgLimitGsol').addEventListener('input', updateCycleHint);
+document.getElementById('cfgOrderBtc').addEventListener('input', updateCycleHint);
+document.getElementById('cfgMaxBid').addEventListener('input', updateCycleHint);
+</script>
+</body>
+</html>

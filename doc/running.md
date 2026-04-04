@@ -58,45 +58,41 @@ The server starts immediately, fetches live data in the background, and is acces
 
 ## Start / Stop / Restart
 
-### Start in background (persist after terminal close)
+The server runs under **PM2** (id: `shabtc-dashboard`) for automatic crash recovery.
+PM2 restarts it after 5 s, with exponential backoff up to 10 retries.
 
 ```bash
-cd /var/www/jeer.currenciary.com/shabtc
-nohup node nh_server.js >> /tmp/nh_server.log 2>&1 &
-echo "PID: $!"
-```
+# Status
+pm2 status shabtc-dashboard
 
-### Check if running
+# Start (if stopped)
+pm2 start shabtc-dashboard
 
-```bash
-ps aux | grep nh_server | grep -v grep
-# or
-curl -s http://localhost:55560/api/live | python3 -m json.tool | head -10
-```
+# Stop
+pm2 stop shabtc-dashboard
 
-### View live logs
+# Restart
+pm2 restart shabtc-dashboard
 
-```bash
+# Live logs
+pm2 logs shabtc-dashboard --lines 50
+
+# Full log file
 tail -f /tmp/nh_server.log
 ```
 
-### Stop
+### First-time PM2 registration (already done — for reference)
 
 ```bash
-# Find the PID
-pgrep -f nh_server.js
-
-# Kill it
-kill $(pgrep -f nh_server.js)
-```
-
-### Restart (stop + start)
-
-```bash
-kill $(pgrep -f nh_server.js) 2>/dev/null; sleep 1
 cd /var/www/jeer.currenciary.com/shabtc
-nohup node nh_server.js >> /tmp/nh_server.log 2>&1 &
-echo "Restarted, PID: $!"
+pm2 start nh_server.js \
+  --name shabtc-dashboard \
+  --interpreter /home/adminweb/.nvm/versions/node/v24.10.0/bin/node \
+  --restart-delay 5000 \
+  --exp-backoff-restart-delay 100 \
+  --max-restarts 10 \
+  --log /tmp/nh_server.log
+pm2 save
 ```
 
 ---
@@ -286,9 +282,125 @@ npm audit fix
 
 ---
 
+## Mining Bot Setup
+
+The server includes an automated ZEC mining bot that rents EQUIHASH hashrate on NiceHash,
+routes ZEC profits through Binance, and auto-funds NiceHash operations.
+
+**Money flow:**
+```
+2Miners pool ─ ZEC payout ─▶ Binance ZEC wallet
+                                    │
+                         Bot splits ZEC balance:
+                         ├─ "ops" share ──▶ withdraw ZEC to NiceHash ZEC addr (~$0.12 fee)
+                         │                      └─ NH Exchange: ZEC→BTC → fund EQUIHASH orders
+                         └─ "profit" share ──▶ Binance ZEC→USDC market sell (stays at Binance)
+```
+
+### Step 1: Configure Binance API credentials
+
+1. In Binance, create an API key with permissions:
+   - **Read** (for balance checks)
+   - **Spot & Margin Trading** (for ZECUSDC sell orders)
+   - **Withdrawals** (for ZEC withdrawal to NiceHash)
+   - Whitelist your server IP in the API key settings
+
+2. Find your Binance **ZEC deposit address** (Wallet → Deposit → ZEC → ZEC network)
+
+3. Open the Bot UI: http://31.56.232.147:55560/bot/
+
+4. In the **Binance Credentials** section, enter:
+   - API Key
+   - API Secret
+   - Binance ZEC Deposit Address ← copy this to 2Miners as your payout address
+   - Click **Save Binance Credentials**
+
+### Step 2: Configure 2Miners payout
+
+In your 2Miners account settings, set the payout address to the **Binance ZEC deposit address**
+saved in step 1. This ensures mining rewards land directly in Binance.
+
+### Step 3: Configure bot settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `max_slots` | 3 | Max simultaneous EQUIHASH orders on NiceHash |
+| `min_arb_ratio` | 1.10 | Minimum arb ratio before placing orders (1.10 = 10% profit margin) |
+| `wait_for_arb` | true | Hold when arb < threshold instead of placing at loss |
+| `order_amount_btc` | 0.005 | BTC amount per NiceHash order |
+| `max_bid_usd` | 26000 | Max bid price USD/GSol/day |
+| `zec_ops_pct` | 30 | % of Binance ZEC balance to send to NiceHash for ops |
+| `nh_btc_threshold` | 0.01 | Top up NiceHash when BTC balance drops below this |
+
+Via UI: http://31.56.232.147:55560/bot/ → Controls & Config → Save Config
+
+Via curl:
+```bash
+curl -s -X POST http://localhost:55560/api/bot/config \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_slots": 3,
+    "min_arb_ratio": 1.10,
+    "wait_for_arb": true,
+    "order_amount_btc": "0.005",
+    "zec_ops_pct": 30,
+    "nh_btc_threshold": 0.01
+  }'
+```
+
+### Step 4: Start the bot
+
+**Via UI:** Click **▶ START BOT**
+
+**Via curl:**
+```bash
+curl -s -X POST http://localhost:55560/api/bot/start
+```
+
+The bot runs a cycle every 60 seconds. Each cycle:
+1. Checks NH BTC balance, active bot orders, Binance ZEC/USDC balances
+2. If arb ≥ min_arb_ratio: places new EQUIHASH orders up to max_slots
+3. If arb < 1.0: cancels all bot-managed orders
+4. If NH BTC < threshold: withdraws ops_pct% of Binance ZEC to NH ZEC deposit address
+5. Remaining Binance ZEC → USDC market sell (profit sweep)
+
+### Bot API Reference
+
+```bash
+# Bot status (active orders, balances, last cycle)
+curl -s http://localhost:55560/api/bot/status | python3 -m json.tool
+
+# Bot config (secrets stripped)
+curl -s http://localhost:55560/api/bot/config | python3 -m json.tool
+
+# Start bot
+curl -s -X POST http://localhost:55560/api/bot/start
+
+# Stop bot (with optional order cancellation)
+curl -s -X POST http://localhost:55560/api/bot/stop \
+  -H 'Content-Type: application/json' \
+  -d '{"cancel_orders": true}'
+
+# Last 200 log entries
+curl -s http://localhost:55560/api/bot/log | python3 -m json.tool
+
+# Force ZEC→NH top-up now
+curl -s -X POST http://localhost:55560/api/bot/topup
+
+# Force ZEC→USDC profit sweep now
+curl -s -X POST http://localhost:55560/api/bot/sweep
+```
+
+### Bot config file
+
+`bot_config.json` is chmod 600. Binance API secret is never returned by `/api/bot/config`.
+
+---
+
 ## Security Notes
 
 - `nh_config.json` is chmod 600 — only readable by `adminweb`
-- The API secret is never returned by `/api/config` (stripped before response)
+- `bot_config.json` is chmod 600 — Binance API secret never returned via HTTP
+- The API secret is never returned by `/api/config` or `/api/bot/config` (stripped before response)
 - The dashboard has no authentication — it is intended for single-user local/VPN access only
 - Do not expose port 55560 on a public interface without adding auth (nginx basic-auth or similar)

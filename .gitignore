@@ -4,6 +4,7 @@
 
   # Credentials — never commit
   nh_config.json
+  bot_config.json
 
   # Compiled C extensions
   *.so

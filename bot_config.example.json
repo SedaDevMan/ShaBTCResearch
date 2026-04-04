@@ -1,0 +1,17 @@
+{
+  "enabled": false,
+  "max_slots": 3,
+  "min_arb_ratio": 1.15,
+  "wait_for_arb": true,
+  "bid_strategy": "cheapest_profitable",
+  "max_bid_usd": 26000,
+  "order_amount_btc": "0.001",
+  "order_limit_gsol": 0.003,
+  "zec_ops_pct": 30,
+  "nh_btc_threshold": 0.005,
+  "binance": {
+    "api_key": "YOUR_BINANCE_API_KEY",
+    "api_secret": "YOUR_BINANCE_API_SECRET",
+    "zec_address": "YOUR_BINANCE_ZEC_DEPOSIT_ADDRESS"
+  }
+}

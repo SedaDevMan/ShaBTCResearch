@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>Algorithm Research — shabtc</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #060d1b;
+      --surface: #0d1829;
+      --surface2:#111f35;
+      --border:  #1a2744;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --blue:    #3b82f6;
+      --purple:  #a855f7;
+      --text:    #e2e8f0;
+      --muted:   #64748b;
+      --mono:    'JetBrains Mono', monospace;
+    }
+    body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
+
+    /* ── Nav ── */
+    nav {
+      background:var(--surface); border-bottom:1px solid var(--border);
+      padding:0 1.5rem; height:52px;
+      display:flex; align-items:center; justify-content:space-between;
+      position:sticky; top:0; z-index:100;
+    }
+    .nav-left { display:flex; align-items:center; gap:.5rem; font-size:.9rem; color:var(--muted); }
+    .nav-left a { color:var(--blue); text-decoration:none; }
+    .nav-left a:hover { text-decoration:underline; }
+    .nav-left .sep { color:var(--border); }
+    .badge-research {
+      font-size:.7rem; padding:.2rem .55rem; border-radius:4px; font-weight:600;
+      background:rgba(168,85,247,.15); color:var(--purple); border:1px solid rgba(168,85,247,.3);
+    }
+
+    /* ── Hero ── */
+    .hero {
+      padding:2.5rem 2rem 1.5rem; text-align:center;
+      border-bottom:1px solid var(--border);
+    }
+    .hero h1 { font-size:1.7rem; font-weight:700; margin-bottom:.4rem; }
+    .hero p { color:var(--muted); max-width:600px; margin:.4rem auto 0; line-height:1.6; }
+    .hero-verdict {
+      display:inline-block; margin-top:1rem;
+      background:rgba(34,197,94,.08); border:1px solid rgba(34,197,94,.25);
+      color:var(--green); border-radius:8px; padding:.5rem 1.2rem;
+      font-size:.82rem; font-weight:600; letter-spacing:.03em;
+    }
+
+    /* ── Layout ── */
+    main { max-width:1200px; margin:0 auto; padding:2rem 1.5rem; }
+
+    /* ── Section header ── */
+    .section-title {
+      font-size:1rem; font-weight:700; color:var(--text);
+      border-left:3px solid var(--blue); padding-left:.75rem;
+      margin:2.5rem 0 1rem;
+    }
+
+    /* ── Verdict matrix ── */
+    .verdict-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .verdict-table th {
+      background:var(--surface2); color:var(--muted); font-weight:600;
+      text-transform:uppercase; letter-spacing:.05em;
+      padding:.55rem .8rem; text-align:left; border-bottom:1px solid var(--border);
+    }
+    .verdict-table td { padding:.55rem .8rem; border-bottom:1px solid rgba(26,39,68,.6); vertical-align:middle; }
+    .verdict-table tr:hover td { background:rgba(255,255,255,.02); }
+    .verdict-table .mono { font-family:var(--mono); font-size:.78rem; }
+    .tag {
+      display:inline-block; font-size:.67rem; padding:.15rem .45rem; border-radius:3px;
+      font-weight:700; letter-spacing:.04em; white-space:nowrap;
+    }
+    .tag.signal { background:rgba(239,68,68,.15); color:var(--red); border:1px solid rgba(239,68,68,.3); }
+    .tag.noise  { background:rgba(34,197,94,.12); color:var(--green); border:1px solid rgba(34,197,94,.25); }
+    .tag.partial { background:rgba(245,158,11,.12); color:var(--amber); border:1px solid rgba(245,158,11,.3); }
+    .tag.validated { background:rgba(59,130,246,.12); color:var(--blue); border:1px solid rgba(59,130,246,.3); }
+
+    /* ── Cards ── */
+    .card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1rem; }
+    .card {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:10px; padding:1.2rem;
+    }
+    .card h4 { font-size:.88rem; font-weight:600; margin-bottom:.6rem; }
+    .stat-row { display:flex; justify-content:space-between; align-items:center; padding:.3rem 0; border-bottom:1px solid rgba(26,39,68,.5); }
+    .stat-row:last-child { border-bottom:none; }
+    .stat-label { color:var(--muted); font-size:.78rem; }
+    .stat-value { font-family:var(--mono); font-size:.8rem; }
+    .stat-value.green { color:var(--green); }
+    .stat-value.red { color:var(--red); }
+    .stat-value.amber { color:var(--amber); }
+    .stat-value.blue { color:var(--blue); }
+
+    /* ── Chart containers ── */
+    .chart-wrap {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:10px; padding:1.2rem 1.2rem 1rem;
+    }
+    .chart-wrap h4 { font-size:.88rem; font-weight:600; margin-bottom:1rem; color:var(--muted); }
+    .chart-wrap canvas { max-height:240px; }
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+    .three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; }
+
+    /* ── Insight box ── */
+    .insight {
+      border-radius:8px; padding:.8rem 1rem; font-size:.8rem; line-height:1.6;
+      margin-top:.8rem;
+    }
+    .insight.green { background:rgba(34,197,94,.07); border:1px solid rgba(34,197,94,.2); color:#86efac; }
+    .insight.red   { background:rgba(239,68,68,.07); border:1px solid rgba(239,68,68,.2); color:#fca5a5; }
+    .insight.amber { background:rgba(245,158,11,.07); border:1px solid rgba(245,158,11,.2); color:#fcd34d; }
+    .insight.blue  { background:rgba(59,130,246,.07); border:1px solid rgba(59,130,246,.2); color:#93c5fd; }
+    .insight strong { font-weight:700; }
+
+    /* ── Algorithm deep-dive sections ── */
+    .algo-section {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:12px; padding:1.5rem; margin-bottom:1.2rem;
+    }
+    .algo-header { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; }
+    .algo-icon {
+      width:40px; height:40px; border-radius:8px;
+      display:flex; align-items:center; justify-content:center; font-size:1.2rem;
+      flex-shrink:0;
+    }
+    .algo-icon.red    { background:rgba(239,68,68,.15); }
+    .algo-icon.green  { background:rgba(34,197,94,.15); }
+    .algo-icon.amber  { background:rgba(245,158,11,.15); }
+    .algo-icon.blue   { background:rgba(59,130,246,.15); }
+    .algo-icon.purple { background:rgba(168,85,247,.15); }
+    .algo-title { font-size:1rem; font-weight:700; }
+    .algo-sub   { font-size:.8rem; color:var(--muted); margin-top:.15rem; }
+
+    /* ── Speedup bar ── */
+    .speedup-row { display:flex; align-items:center; gap:.6rem; margin:.4rem 0; font-size:.78rem; }
+    .speedup-label { width:90px; text-align:right; color:var(--muted); flex-shrink:0; }
+    .speedup-bar-wrap { flex:1; background:rgba(255,255,255,.05); border-radius:3px; height:14px; overflow:hidden; }
+    .speedup-bar { height:14px; border-radius:3px; }
+    .speedup-val { width:80px; font-family:var(--mono); color:var(--text); font-size:.75rem; }
+
+    /* ── Correlation meter ── */
+    .corr-meter { display:flex; align-items:center; gap:.5rem; margin:.3rem 0; font-size:.78rem; }
+    .corr-label { width:80px; color:var(--muted); font-size:.75rem; flex-shrink:0; }
+    .corr-track { flex:1; background:rgba(255,255,255,.05); border-radius:3px; height:12px; position:relative; overflow:hidden; }
+    .corr-fill  { height:12px; border-radius:3px; }
+    .corr-val   { width:120px; font-family:var(--mono); font-size:.73rem; }
+
+    /* ── Responsive ── */
+    @media(max-width:800px) {
+      .two-col   { grid-template-columns:1fr; }
+      .three-col { grid-template-columns:1fr 1fr; }
+    }
+    @media(max-width:500px) {
+      .three-col { grid-template-columns:1fr; }
+      .verdict-table th:nth-child(4),
+      .verdict-table td:nth-child(4) { display:none; }
+    }
+
+    footer {
+      text-align:center; padding:1.5rem; color:var(--muted);
+      font-size:.78rem; border-top:1px solid var(--border); margin-top:2rem;
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-left">
+    <a href="/">shabtc</a>
+    <span class="sep">/</span>
+    <span>Algorithm Research</span>
+  </div>
+  <span class="badge-research">🔬 PoC Validated</span>
+</nav>
+
+<!-- ── Hero ── -->
+<div class="hero">
+  <h1>Algorithm Research</h1>
+  <p>Statistical &amp; algebraic attack analysis across 7 mining algorithms. Can previous block hashes or nonce patterns be exploited to skip brute-force search?</p>
+  <div class="hero-verdict">
+    FINAL CONCLUSION: No production algorithm shows exploitable nonce structure
+  </div>
+</div>
+
+<main>
+
+  <!-- ── Verdict Matrix ── -->
+  <div class="section-title">Verdict Matrix — All Algorithms</div>
+  <div style="overflow-x:auto;">
+  <table class="verdict-table">
+    <thead>
+      <tr>
+        <th>Algorithm</th>
+        <th>Coin / Use</th>
+        <th>Method tested</th>
+        <th>Key statistic</th>
+        <th>Signal?</th>
+        <th>Verdict</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>xxHash64</strong></td>
+        <td style="color:var(--muted)">Toy PoC</td>
+        <td>Algebraic inversion</td>
+        <td class="mono" style="color:var(--green)">6× speedup @ 40-bit</td>
+        <td><span class="tag validated">ALGEBRAIC</span></td>
+        <td style="color:var(--amber)">Invertible (non-crypto)</td>
+      </tr>
+      <tr>
+        <td><strong>HeavyHash</strong></td>
+        <td style="color:var(--muted)">Kaspa (KAS)</td>
+        <td>Correlation, χ²</td>
+        <td class="mono" style="color:var(--green)">r=0.054  p=0.958</td>
+        <td><span class="tag noise">NO SIGNAL</span></td>
+        <td style="color:var(--green)">SHA3-256 wrapping secure</td>
+      </tr>
+      <tr>
+        <td><strong>VerusHash toy N=1</strong></td>
+        <td style="color:var(--muted)">Simulated</td>
+        <td>Byte correlation</td>
+        <td class="mono" style="color:var(--red)">r=0.354  p=0.000</td>
+        <td><span class="tag signal">SIGNAL</span></td>
+        <td style="color:var(--red)">No MixColumns → byte leak</td>
+      </tr>
+      <tr>
+        <td><strong>VerusHash toy N≥4</strong></td>
+        <td style="color:var(--muted)">Simulated</td>
+        <td>Byte correlation</td>
+        <td class="mono" style="color:var(--green)">r=0.008  p=0.240</td>
+        <td><span class="tag noise">NO SIGNAL</span></td>
+        <td style="color:var(--green)">Full AES avalanche</td>
+      </tr>
+      <tr>
+        <td><strong>RandomX sim</strong></td>
+        <td style="color:var(--muted)">Monero (XMR)</td>
+        <td>Bit-corr, timing</td>
+        <td class="mono" style="color:var(--green)">r=0.012  p=0.500</td>
+        <td><span class="tag noise">NO SIGNAL</span></td>
+        <td style="color:var(--green)">10-round AES + SHA3</td>
+      </tr>
+      <tr>
+        <td><strong>SHA256d</strong></td>
+        <td style="color:var(--muted)">Bitcoin (BTC)</td>
+        <td>All methods</td>
+        <td class="mono" style="color:var(--green)">p&gt;0.01 all tests</td>
+        <td><span class="tag noise">NO SIGNAL</span></td>
+        <td style="color:var(--green)">Cryptographically secure</td>
+      </tr>
+      <tr>
+        <td><strong>Real Haraka-512 (5r)</strong></td>
+        <td style="color:var(--muted)">VerusHash 2.1</td>
+        <td>Avalanche, ML, corr</td>
+        <td class="mono" style="color:var(--green)">AUC=0.492  r=0.006</td>
+        <td><span class="tag noise">NO SIGNAL</span></td>
+        <td style="color:var(--green)">MIX512 = full diffusion</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <!-- ── Charts row ── -->
+  <div class="section-title">Correlation Strength by Algorithm</div>
+  <div class="two-col">
+    <div class="chart-wrap">
+      <h4>|r| correlation: winner nonce vs hash feature</h4>
+      <canvas id="corrChart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <h4>VerusHash: correlation vs AES round count</h4>
+      <canvas id="roundChart"></canvas>
+    </div>
+  </div>
+
+  <!-- ── xxHash64 Algebraic Inversion ── -->
+  <div class="section-title">① xxHash64 — Algebraic Inversion</div>
+  <div class="algo-section">
+    <div class="algo-header">
+      <div class="algo-icon amber">🔑</div>
+      <div>
+        <div class="algo-title">xxHash64 Algebraic Inversion — PoC Success</div>
+        <div class="algo-sub">12-byte input, seed=0 · Non-cryptographic · Algebraically invertible</div>
+      </div>
+      <span class="tag validated" style="margin-left:auto">ALGEBRAIC ✓</span>
+    </div>
+
+    <div class="two-col">
+      <div>
+        <div style="font-size:.78rem;color:var(--muted);margin-bottom:.5rem;font-weight:600;">INVERSION FORMULA</div>
+        <pre style="background:#060d1b;border:1px solid var(--border);border-radius:6px;padding:.8rem;font-family:var(--mono);font-size:.72rem;color:#93c5fd;line-height:1.7;overflow-x:auto;">M   = rotl(rotl(P_le×P2,31)×P1
+        ⊕ (P5+12), 27)×P1 + P4
+pre = rotl(M ⊕ (bswap32(n)×P1), 23)×P2 + P3
+out = avalanche(pre)
+
+Inverse: out → pre → N_le → nonce (bswap32)
+Valid when N_le &lt; 2³²</pre>
+        <div class="insight blue" style="margin-top:.6rem">
+          <strong>Key result:</strong> Nonce recovery is 100% accurate. The inverse is deterministic — given any target hash output, the correct nonce is computed in O(difficulty) steps, not O(2³²).
+        </div>
+      </div>
+      <div>
+        <div style="font-size:.78rem;color:var(--muted);margin-bottom:.6rem;font-weight:600;">SPEEDUP vs BRUTE FORCE</div>
+        <div class="speedup-row">
+          <div class="speedup-label">32-bit diff</div>
+          <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:1%;background:var(--muted)"></div></div>
+          <div class="speedup-val">1× (crossover)</div>
+        </div>
+        <div class="speedup-row">
+          <div class="speedup-label">40-bit diff</div>
+          <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:8%;background:var(--amber)"></div></div>
+          <div class="speedup-val">6× faster</div>
+        </div>
+        <div class="speedup-row">
+          <div class="speedup-label">48-bit diff</div>
+          <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:40%;background:var(--blue)"></div></div>
+          <div class="speedup-val">65,536× faster</div>
+        </div>
+        <div class="speedup-row">
+          <div class="speedup-label">56-bit diff</div>
+          <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:75%;background:var(--green)"></div></div>
+          <div class="speedup-val">16.7M× faster</div>
+        </div>
+        <div class="speedup-row">
+          <div class="speedup-label">70-bit (BTC)</div>
+          <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:100%;background:var(--purple)"></div></div>
+          <div class="speedup-val">2³⁸× if invertible*</div>
+        </div>
+        <div class="insight amber" style="margin-top:.6rem">
+          *SHA256d is <strong>not invertible</strong> — this is the theoretical bound if it were. Bitcoin remains secure.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── VerusHash AES Analysis ── -->
+  <div class="section-title">② VerusHash — AES Round-Count Analysis</div>
+  <div class="algo-section">
+    <div class="algo-header">
+      <div class="algo-icon red">🔴</div>
+      <div>
+        <div class="algo-title">VerusHash Toy AES — Signal at N=1, Noise at N≥4</div>
+        <div class="algo-sub">AES-NI, configurable rounds · ~195K winner pairs per N · 8-bit difficulty</div>
+      </div>
+    </div>
+    <div class="three-col">
+      <div class="card">
+        <h4 style="color:var(--red)">N=1 round — SIGNAL</h4>
+        <div class="stat-row"><span class="stat-label">Correlation |r|</span><span class="stat-value red">0.354</span></div>
+        <div class="stat-row"><span class="stat-label">p-value</span><span class="stat-value red">0.000</span></div>
+        <div class="stat-row"><span class="stat-label">Std winners/block</span><span class="stat-value red">0.3 (deterministic)</span></div>
+        <div class="stat-row"><span class="stat-label">MixColumns</span><span class="stat-value red">None</span></div>
+        <div class="insight red" style="margin-top:.5rem;font-size:.74rem;">
+          output[0] = f(nonce_byte0) <strong>exactly</strong>. Algebraic prediction: perfect.
+        </div>
+      </div>
+      <div class="card">
+        <h4 style="color:var(--amber)">N=2 rounds — SIGNAL</h4>
+        <div class="stat-row"><span class="stat-label">Correlation |r|</span><span class="stat-value amber">0.319</span></div>
+        <div class="stat-row"><span class="stat-label">p-value</span><span class="stat-value amber">0.000</span></div>
+        <div class="stat-row"><span class="stat-label">Std winners/block</span><span class="stat-value amber">~12</span></div>
+        <div class="stat-row"><span class="stat-label">MixColumns</span><span class="stat-value amber">1 round</span></div>
+        <div class="insight amber" style="margin-top:.5rem;font-size:.74rem;">
+          1 MixColumns pass — partial diffusion. Still 1 output byte per nonce byte.
+        </div>
+      </div>
+      <div class="card">
+        <h4 style="color:var(--green)">N=4 rounds — NOISE</h4>
+        <div class="stat-row"><span class="stat-label">Correlation |r|</span><span class="stat-value green">0.008</span></div>
+        <div class="stat-row"><span class="stat-label">p-value</span><span class="stat-value green">0.240</span></div>
+        <div class="stat-row"><span class="stat-label">Std winners/block</span><span class="stat-value green">~44 (binomial)</span></div>
+        <div class="stat-row"><span class="stat-label">MixColumns</span><span class="stat-value green">3 rounds</span></div>
+        <div class="insight green" style="margin-top:.5rem;font-size:.74rem;">
+          Full avalanche. Output indistinguishable from SHA3 — no exploitable structure.
+        </div>
+      </div>
+    </div>
+    <div class="insight blue" style="margin-top:.8rem">
+      <strong>Structural insight:</strong> MixColumns is the critical layer. Below 4 rounds, each output byte depends on only 1–2 input bytes, creating a recoverable linear mapping. Real VerusHash 2.1 uses ≥4 rounds → secure.
+    </div>
+  </div>
+
+  <!-- ── Real Haraka-512 ── -->
+  <div class="section-title">③ Real Haraka-512 (VerusHash 2.1)</div>
+  <div class="algo-section">
+    <div class="algo-header">
+      <div class="algo-icon green">✅</div>
+      <div>
+        <div class="algo-title">Full Haraka-512 Implementation — Cryptographically Secure</div>
+        <div class="algo-sub">40 correct RC constants from π · 5 rounds · MIX512 cross-block permutation · 7.99 MH/s</div>
+      </div>
+      <span class="tag noise" style="margin-left:auto">NO SIGNAL</span>
+    </div>
+    <div class="two-col">
+      <div>
+        <div class="card-grid" style="grid-template-columns:1fr 1fr; gap:.6rem;">
+          <div class="card">
+            <div class="stat-label" style="margin-bottom:.3rem">Avalanche quality</div>
+            <div class="stat-value blue" style="font-size:1.1rem">128.3 / 256</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:.2rem">bits flipped per 1-bit nonce flip (ideal = 128)</div>
+          </div>
+          <div class="card">
+            <div class="stat-label" style="margin-bottom:.3rem">Byte₀ correlation</div>
+            <div class="stat-value green" style="font-size:1.1rem">r = 0.0062</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:.2rem">p = 0.16 · independent</div>
+          </div>
+          <div class="card">
+            <div class="stat-label" style="margin-bottom:.3rem">ML AUC (GradBoost)</div>
+            <div class="stat-value green" style="font-size:1.1rem">0.4923</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:.2rem">0.50 = perfect noise</div>
+          </div>
+          <div class="card">
+            <div class="stat-label" style="margin-bottom:.3rem">Winner distribution χ²</div>
+            <div class="stat-value green" style="font-size:1.1rem">p = 0.36</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:.2rem">uniform ✓</div>
+          </div>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <h4>Toy N=1 vs Real Haraka-512 — Avalanche &amp; Correlation</h4>
+        <canvas id="harakaChart"></canvas>
+      </div>
+    </div>
+    <div class="insight green" style="margin-top:.8rem">
+      <strong>Why MIX512 is decisive:</strong> The 4×128-bit parallel AES block structure is interleaved by MIX512 after each round, meaning every input bit propagates across all 512 output bits within the first round. This achieves full diffusion even with a single AES round — the toy N=1 flaw (no inter-block mixing) is architecturally impossible in real Haraka-512.
+    </div>
+  </div>
+
+  <!-- ── Kaspa / RandomX / Block hash ── -->
+  <div class="section-title">④ Other Algorithms — All Secure</div>
+  <div class="card-grid">
+    <div class="algo-section" style="margin-bottom:0">
+      <div class="algo-header">
+        <div class="algo-icon green">🟢</div>
+        <div>
+          <div class="algo-title">HeavyHash — Kaspa</div>
+          <div class="algo-sub">100 blocks · 14-bit diff · 3,020 winners</div>
+        </div>
+        <span class="tag noise" style="margin-left:auto">NOISE</span>
+      </div>
+      <div class="corr-meter">
+        <div class="corr-label">Hash→nonce</div>
+        <div class="corr-track"><div class="corr-fill" style="width:5.4%;background:var(--green)"></div></div>
+        <div class="corr-val mono" style="color:var(--green)">r=0.054 p=0.958</div>
+      </div>
+      <div class="corr-meter">
+        <div class="corr-label">Matrix-sum</div>
+        <div class="corr-track"><div class="corr-fill" style="width:7%;background:var(--green)"></div></div>
+        <div class="corr-val mono" style="color:var(--green)">r=0.070 p=0.130</div>
+      </div>
+      <div class="corr-meter">
+        <div class="corr-label">Nonce dist χ²</div>
+        <div class="corr-track"><div class="corr-fill" style="width:91.2%;background:rgba(34,197,94,.3)"></div></div>
+        <div class="corr-val mono" style="color:var(--green)">p=0.912 uniform</div>
+      </div>
+      <div class="insight green" style="margin-top:.5rem;font-size:.74rem;">SHA3-256 final hash defeats all algebraic &amp; statistical approaches.</div>
+    </div>
+
+    <div class="algo-section" style="margin-bottom:0">
+      <div class="algo-header">
+        <div class="algo-icon green">🟢</div>
+        <div>
+          <div class="algo-title">RandomX Simulation</div>
+          <div class="algo-sub">100 blocks · 200K nonces · 77K winners</div>
+        </div>
+        <span class="tag noise" style="margin-left:auto">NOISE</span>
+      </div>
+      <div class="corr-meter">
+        <div class="corr-label">Bit correlation</div>
+        <div class="corr-track"><div class="corr-fill" style="width:1.2%;background:var(--green)"></div></div>
+        <div class="corr-val mono" style="color:var(--green)">r=0.012 p=0.500</div>
+      </div>
+      <div class="corr-meter">
+        <div class="corr-label">CBRANCH timing</div>
+        <div class="corr-track"><div class="corr-fill" style="width:0%;background:var(--green)"></div></div>
+        <div class="corr-val mono" style="color:var(--green)">count=0 p=1.000</div>
+      </div>
+      <div class="corr-meter">
+        <div class="corr-label">Nonce dist χ²</div>
+        <div class="corr-track"><div class="corr-fill" style="width:86.5%;background:rgba(34,197,94,.3)"></div></div>
+        <div class="corr-val mono" style="color:var(--green)">p=0.865 uniform</div>
+      </div>
+      <div class="insight green" style="margin-top:.5rem;font-size:.74rem;">CBRANCH never triggers on the test program. 10-round AES finalization + SHA3 = full diffusion.</div>
+    </div>
+
+    <div class="algo-section" style="margin-bottom:0">
+      <div class="algo-header">
+        <div class="algo-icon blue">🔲</div>
+        <div>
+          <div class="algo-title">Block Hash as Nonce Selector</div>
+          <div class="algo-sub">200 blocks · 256K nonces · 11 selector functions</div>
+        </div>
+        <span class="tag noise" style="margin-left:auto">ZERO SIGNAL</span>
+      </div>
+      <div style="font-size:.78rem;color:var(--muted);margin:.4rem 0 .3rem;">SHA256d hit rates (all selectors):</div>
+      <div class="speedup-row">
+        <div class="speedup-label" style="width:110px;">Min hit rate</div>
+        <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:95%;background:rgba(34,197,94,.4)"></div></div>
+        <div class="speedup-val">0.95×</div>
+      </div>
+      <div class="speedup-row">
+        <div class="speedup-label" style="width:110px;">Max hit rate</div>
+        <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:100%;background:rgba(34,197,94,.4)"></div></div>
+        <div class="speedup-val">1.05×</div>
+      </div>
+      <div class="speedup-row">
+        <div class="speedup-label" style="width:110px;">Oracle (best)</div>
+        <div class="speedup-bar-wrap"><div class="speedup-bar" style="width:100%;background:rgba(59,130,246,.3)"></div></div>
+        <div class="speedup-val">2.69× (not predictable)</div>
+      </div>
+      <div class="insight blue" style="margin-top:.5rem;font-size:.74rem;"><strong>Conclusion:</strong> prev_hash carries zero predictive information about which nonce bucket will win. The 2.69× oracle gain is the max of 256 Poisson samples — pure luck, not predictable.</div>
+    </div>
+  </div>
+
+  <!-- ── Mining Score Variance ── -->
+  <div class="section-title">⑤ Mining Profitability Variance Scanner</div>
+  <div class="algo-section">
+    <div class="algo-header">
+      <div class="algo-icon purple">📈</div>
+      <div>
+        <div class="algo-title">90-Day Score Variance — 5 Coins</div>
+        <div class="algo-sub">score = price × block_reward / difficulty · normalized to daily mean</div>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="chart-wrap">
+        <h4>Coefficient of Variation by coin (higher = more volatile)</h4>
+        <canvas id="cvChart"></canvas>
+      </div>
+      <div>
+        <div class="card-grid" style="grid-template-columns:1fr; gap:.6rem;">
+          <div class="card">
+            <h4>Optimal coin-switching results</h4>
+            <div class="stat-row"><span class="stat-label">Daily switch improvement</span><span class="stat-value green">1.15× average</span></div>
+            <div class="stat-row"><span class="stat-label">Best single day</span><span class="stat-value green">2.76× above baseline</span></div>
+            <div class="stat-row"><span class="stat-label">ETC spike magnitude</span><span class="stat-value amber">8.5σ max</span></div>
+            <div class="stat-row"><span class="stat-label">ETC top-4 days</span><span class="stat-value amber">14.6% of 90d revenue</span></div>
+            <div class="stat-row"><span class="stat-label">Top 10 days/month</span><span class="stat-value blue">47.5% rev at 1.41× eff</span></div>
+          </div>
+          <div class="insight amber">
+            <strong>ETC is the outlier.</strong> CV=0.628 vs BTC CV=0.119. A single lucky day on ETC can contribute 3–4× a typical day's revenue. This makes ETC the highest-priority coin to watch for difficulty spikes.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Final conclusion ── -->
+  <div class="section-title">Overall Conclusion</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+    <div class="insight green" style="padding:1rem 1.2rem;">
+      <strong>What we confirmed:</strong><br><br>
+      • All production mining algorithms (SHA256d, Haraka-512, HeavyHash, RandomX) are statistically indistinguishable from ideal random oracles under all tested attacks.<br><br>
+      • No cross-block-of-time nonce carry-over observed in any algorithm.<br><br>
+      • Methodology is validated: detects provably leaky hashes (xor_shift p=0.000, VerusHash N=1 r=0.354) and correctly finds nothing on secure algorithms.
+    </div>
+    <div class="insight amber" style="padding:1rem 1.2rem;">
+      <strong>What remains open:</strong><br><br>
+      • The algebraic speedup is real for xxHash64 (non-crypto). If a real mining algorithm were to expose an invertible sub-component, speedup scales exponentially with difficulty.<br><br>
+      • VerusHash 2.1 rounds &lt;4 are exploitable — real hardware must implement ≥4 rounds to be secure.<br><br>
+      • Mining profitability timing (ETC difficulty spikes) represents the most actionable near-term edge: no hash math required.
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  shabtc — Algorithm Research · Scripts: algebraic_solver.py · verus_aes.c · randomx_sim.c · heavyhash.c · verus_real.c · blockhash_selector.py · mining_score.py
+</footer>
+
+<script>
+  const CHART_DEFAULTS = {
+    plugins: { legend: { labels: { color: '#64748b', font: { size: 11 } } } },
+    scales: {
+      x: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(26,39,68,.6)' } },
+      y: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(26,39,68,.6)' } },
+    },
+    responsive: true,
+    maintainAspectRatio: true,
+  };
+
+  // ── Correlation chart ──────────────────────────────────────────────────────
+  new Chart(document.getElementById('corrChart'), {
+    type: 'bar',
+    data: {
+      labels: ['HeavyHash\n(Kaspa)', 'RandomX\nsim', 'SHA256d\n(BTC)', 'Haraka-512\n(real)', 'VerusHash\nN=4', 'VerusHash\nN=2', 'VerusHash\nN=1'],
+      datasets: [{
+        label: '|r| correlation',
+        data: [0.054, 0.012, 0.003, 0.006, 0.008, 0.319, 0.354],
+        backgroundColor: [
+          'rgba(34,197,94,.6)','rgba(34,197,94,.6)','rgba(34,197,94,.6)',
+          'rgba(34,197,94,.6)','rgba(34,197,94,.6)',
+          'rgba(245,158,11,.7)','rgba(239,68,68,.7)',
+        ],
+        borderColor: [
+          '#22c55e','#22c55e','#22c55e','#22c55e','#22c55e','#f59e0b','#ef4444',
+        ],
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      plugins: {
+        ...CHART_DEFAULTS.plugins,
+        annotation: {},
+      },
+      scales: {
+        ...CHART_DEFAULTS.scales,
+        y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 0.4,
+          title: { display: true, text: '|r| correlation', color: '#64748b', font: { size: 11 } } },
+      },
+    }
+  });
+
+  // ── Round chart ────────────────────────────────────────────────────────────
+  new Chart(document.getElementById('roundChart'), {
+    type: 'line',
+    data: {
+      labels: ['N=1', 'N=2', 'N=4', 'N=10'],
+      datasets: [{
+        label: '|r| correlation',
+        data: [0.354, 0.319, 0.008, 0.008],
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,.1)',
+        pointBackgroundColor: ['#ef4444','#f59e0b','#22c55e','#22c55e'],
+        pointRadius: 6,
+        pointHoverRadius: 8,
+        tension: 0.3,
+        fill: true,
+      },{
+        label: 'Noise threshold (p=0.05)',
+        data: [0.02, 0.02, 0.02, 0.02],
+        borderColor: 'rgba(100,116,139,.5)',
+        borderDash: [5, 5],
+        pointRadius: 0,
+        fill: false,
+      }]
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      scales: {
+        ...CHART_DEFAULTS.scales,
+        y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 0.4,
+          title: { display: true, text: '|r|', color: '#64748b', font: { size: 11 } } },
+      },
+    }
+  });
+
+  // ── Haraka comparison chart ────────────────────────────────────────────────
+  new Chart(document.getElementById('harakaChart'), {
+    type: 'bar',
+    data: {
+      labels: ['Avalanche\n(bits/256)', '|r| ×100', 'ML AUC\n×100'],
+      datasets: [{
+        label: 'Toy N=1 (exploitable)',
+        data: [69, 35.4, 98],
+        backgroundColor: 'rgba(239,68,68,.6)',
+        borderColor: '#ef4444',
+        borderWidth: 1,
+        borderRadius: 4,
+      },{
+        label: 'Real Haraka-512 (secure)',
+        data: [128.3, 0.62, 49.2],
+        backgroundColor: 'rgba(34,197,94,.6)',
+        borderColor: '#22c55e',
+        borderWidth: 1,
+        borderRadius: 4,
+      },{
+        label: 'Ideal (secure = green zone)',
+        data: [128, 0, 50],
+        backgroundColor: 'rgba(59,130,246,.25)',
+        borderColor: '#3b82f6',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      scales: {
+        ...CHART_DEFAULTS.scales,
+        y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 140 },
+      },
+    }
+  });
+
+  // ── CV chart ───────────────────────────────────────────────────────────────
+  new Chart(document.getElementById('cvChart'), {
+    type: 'bar',
+    data: {
+      labels: ['BTC', 'LTC', 'XMR', 'ZEC', 'ETC'],
+      datasets: [{
+        label: 'CV (coefficient of variation)',
+        data: [0.1191, 0.1911, 0.2396, 0.2805, 0.6281],
+        backgroundColor: [
+          'rgba(100,116,139,.5)',
+          'rgba(100,116,139,.5)',
+          'rgba(59,130,246,.5)',
+          'rgba(59,130,246,.5)',
+          'rgba(245,158,11,.7)',
+        ],
+        borderColor: ['#64748b','#64748b','#3b82f6','#3b82f6','#f59e0b'],
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      scales: {
+        ...CHART_DEFAULTS.scales,
+        y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 0.7,
+          title: { display: true, text: 'CV', color: '#64748b', font: { size: 11 } } },
+      },
+    }
+  });
+</script>
+</body>
+</html>
