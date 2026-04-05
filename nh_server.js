@@ -388,9 +388,10 @@ function nhRequest(method, endpoint, query = '', body = '') {
   const secret = config.api_secret;
   if (!key || !secret) return Promise.reject(new Error('No NH credentials'));
 
-  const ts = Date.now().toString();
-  const nonce = crypto.randomUUID().replace(/-/g, '');
-  const msg = [key, ts, nonce, '', method.toUpperCase(), endpoint, query, '', body || ''].join('\0');
+  const ts    = Date.now().toString();
+  const nonce = crypto.randomUUID();   // keep dashes — NH spec requires UUID format
+  // Official NiceHash HMAC format: key\0time\0nonce\0org_id\0METHOD\0path\0query\0\0body
+  const msg = [key, ts, nonce, config.org_id || '', method.toUpperCase(), endpoint, query, '', body || ''].join('\0');
   const sig = crypto.createHmac('sha256', secret).update(msg).digest('hex');
 
   const qs = query ? `?${query}` : '';
@@ -403,7 +404,9 @@ function nhRequest(method, endpoint, query = '', body = '') {
     headers: {
       'X-Time': ts,
       'X-Nonce': nonce,
+      'X-Request-Id': nonce,
       'X-Auth': `${key}:${sig}`,
+      'X-Organization-Id': config.org_id || '',
       'Content-Type': 'application/json',
       'User-Agent': 'shabtc-dashboard/1.0',
     },
