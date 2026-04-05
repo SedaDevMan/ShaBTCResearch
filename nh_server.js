@@ -151,14 +151,14 @@ function binanceRequest(method, path, params = {}, signed = true) {
   });
 }
 
-// ── NH ZEC deposit address ─────────────────────────────────────────────────
-async function getNHZecDepositAddress() {
-  const result = await nhRequest('GET', '/main/api/v2/accounting/depositAddresses', 'currency=ZEC');
-  if (result.status !== 200) throw new Error(`NH deposit addr error: ${JSON.stringify(result.body)}`);
-  const list = result.body.list || result.body.depositAddresses || [];
-  const entry = list.find(a => a.currency === 'ZEC' || a.coin === 'ZEC');
-  if (!entry) throw new Error('ZEC deposit address not found in NH response');
-  return entry.address || entry.depositAddress;
+// ── NH BTC deposit address ─────────────────────────────────────────────────
+async function getNHBtcDepositAddress() {
+  const result = await nhRequest('GET', '/main/api/v2/accounting/depositAddresses', 'currency=BTC');
+  if (result.status !== 200) throw new Error(`NH BTC deposit addr error: ${JSON.stringify(result.body)}`);
+  const list = result.body.list || [];
+  const entry = list.find(a => a.currency === 'BTC');
+  if (!entry) throw new Error('BTC deposit address not found in NH response');
+  return entry.address;
 }
 
 // ── Bot cycle ─────────────────────────────────────────────────────────────
@@ -234,19 +234,17 @@ async function runBotCycle() {
       }
     }
 
-    // ── Funding check (NH BTC low) ──
+    // ── Funding check (NH BTC low) → sell ops% ZEC→BTC on Binance, withdraw to NH ──
+    let zecAfterFunding = bnZec;
     if (nhBtc !== null && nhBtc < cfg.nh_btc_threshold && bnZec > 0.01) {
-      await fundNiceHash(cfg, bnZec);
+      const opsZec = +(bnZec * (cfg.zec_ops_pct / 100)).toFixed(8);
+      await fundNiceHash(opsZec);
+      zecAfterFunding = +(bnZec - opsZec).toFixed(8);
     }
 
     // ── Profit sweep (remaining ZEC → USDC) ──
-    // Refresh ZEC balance after possible funding withdrawal
-    if (bnZec > 0.01) {
-      const opsZec = bnZec * (cfg.zec_ops_pct / 100);
-      const profitZec = bnZec - opsZec;
-      if (profitZec > 0.005) {
-        await sweepProfitZec(profitZec);
-      }
+    if (zecAfterFunding > 0.005) {
+      await sweepProfitZec(zecAfterFunding);
     }
 
   } catch (e) {
@@ -305,20 +303,38 @@ async function placeBotOrder(cfg, arb) {
   }
 }
 
-async function fundNiceHash(cfg, bnZec) {
+async function fundNiceHash(opsZec) {
   try {
-    const nhZecAddr = await getNHZecDepositAddress();
-    const opsZec = +(bnZec * (cfg.zec_ops_pct / 100)).toFixed(8);
+    botLogEntry(`NH BTC low — selling ${opsZec} ZEC→BTC on Binance then withdrawing to NiceHash`);
 
-    botLogEntry(`NH BTC low — sending ${opsZec} ZEC to NiceHash deposit address (~$0.12 fee)`);
+    // Step 1: sell ZEC→BTC on Binance
+    const sellResult = await binanceRequest('POST', '/api/v3/order', {
+      symbol: 'ZECBTC', side: 'SELL', type: 'MARKET', quantity: opsZec.toFixed(8),
+    });
+    if (sellResult.status !== 200 && sellResult.status !== 201) {
+      botLogEntry(`ZEC→BTC sell error: ${JSON.stringify(sellResult.body)}`);
+      return;
+    }
+    const fills = sellResult.body.fills || [];
+    const btcGross = +fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0).toFixed(8);
+    botLogEntry(`Sold ${opsZec} ZEC → ${btcGross} BTC`);
 
+    // Step 2: withdraw BTC to NiceHash (BTC network fee ~0.0001 BTC)
+    const BTC_FEE = 0.0001;
+    const btcToSend = +(btcGross - BTC_FEE).toFixed(8);
+    if (btcToSend <= 0) {
+      botLogEntry(`BTC amount after fee is ${btcToSend} — too small, skipping withdrawal`);
+      return;
+    }
+    const nhBtcAddr = await getNHBtcDepositAddress();
+    const feeDollar = (BTC_FEE * (liveCache?.prices?.btc || 80000)).toFixed(0);
     const wdResult = await binanceRequest('POST', '/sapi/v1/capital/withdraw/apply', {
-      coin: 'ZEC', network: 'ZEC', address: nhZecAddr, amount: opsZec,
+      coin: 'BTC', network: 'BTC', address: nhBtcAddr, amount: btcToSend.toFixed(8),
     });
     if (wdResult.status === 200) {
-      botLogEntry(`Binance ZEC withdrawal submitted: ${opsZec} ZEC → ${nhZecAddr.slice(0, 12)}… id=${wdResult.body.id}`);
+      botLogEntry(`Sent ${btcToSend} BTC to NiceHash (fee ~$${feeDollar}) id=${wdResult.body.id}`);
     } else {
-      botLogEntry(`Binance ZEC withdrawal error: ${JSON.stringify(wdResult.body)}`);
+      botLogEntry(`BTC withdrawal error: ${JSON.stringify(wdResult.body)}`);
     }
   } catch (e) {
     botLogEntry(`fundNiceHash error: ${e.message}`);
@@ -781,7 +797,8 @@ app.post('/api/bot/topup', async (req, res) => {
     const bnAccRes = await binanceRequest('GET', '/api/v3/account', {});
     const balances = bnAccRes.body.balances || [];
     const bnZec = parseFloat((balances.find(b => b.asset === 'ZEC') || {}).free || 0);
-    await fundNiceHash(botConfig, bnZec);
+    const opsZec = +(bnZec * ((botConfig.zec_ops_pct || 30) / 100)).toFixed(8);
+    await fundNiceHash(opsZec);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -793,11 +810,9 @@ app.post('/api/bot/sweep', async (req, res) => {
     const bnAccRes = await binanceRequest('GET', '/api/v3/account', {});
     const balances = bnAccRes.body.balances || [];
     const bnZec = parseFloat((balances.find(b => b.asset === 'ZEC') || {}).free || 0);
-    const opsZec   = bnZec * (botConfig.zec_ops_pct / 100);
-    const profitZec = bnZec - opsZec;
-    if (profitZec > 0.005) {
-      await sweepProfitZec(profitZec);
-      res.json({ ok: true, swept_zec: profitZec });
+    if (bnZec > 0.005) {
+      await sweepProfitZec(bnZec);
+      res.json({ ok: true, swept_zec: bnZec });
     } else {
       res.json({ ok: false, msg: 'Not enough ZEC to sweep', bnZec });
     }
