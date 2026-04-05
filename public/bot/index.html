@@ -248,9 +248,14 @@
           <p class="hint">NH hard floor: 0.001 BTC</p>
         </div>
         <div class="field">
-          <label>Hashrate Limit (GSol/s) <span id="cycleDurHint" style="color:#f59e0b;font-weight:600;"></span></label>
+          <label>Min Hashrate Limit (GSol/s) <span id="cycleDurHint" style="color:#f59e0b;font-weight:600;"></span></label>
           <input type="number" id="cfgLimitGsol" step="0.001" min="0.003" value="0.003">
-          <p class="hint">NH min: 0.003. Higher = faster cycle = less timing risk.</p>
+          <p class="hint">NH min: 0.003. Bot auto-scales up to available market speed.</p>
+        </div>
+        <div class="field">
+          <label title="0 = use full available market speed (auto). Set a value to cap the max hashrate rented.">Max Hashrate Cap (GSol/s) <span id="availSpeedHint" style="color:#22c55e;font-size:0.8rem;"></span></label>
+          <input type="number" id="cfgMaxLimit" step="0.01" min="0" value="0">
+          <p class="hint">0 = auto (uses all available speed). e.g. 0.100 = cap at 100 MSol/s.</p>
         </div>
         <div class="field">
           <label>Max Bid USD/GSol/day</label>
@@ -263,6 +268,10 @@
         <div class="field">
           <label>NH BTC Top-up Threshold</label>
           <input type="number" id="cfgNhThreshold" step="0.001" value="0.005">
+        </div>
+        <div class="field">
+          <label title="Cancel &amp; re-place if arb ratio improves by this % since order was placed (e.g. 25 = reprice when arb rises +25%)">Reprice Scale %</label>
+          <input type="number" id="cfgReprice" min="5" max="100" step="5" value="25">
         </div>
       </div>
       <div class="btn-row">
@@ -402,6 +411,10 @@ function handleLive(data) {
   liveArb = data.zec_arb?.arb_ratio ?? null;
   document.getElementById('arbVal').textContent = liveArb !== null ? `${liveArb.toFixed(3)}×` : '–';
   if (data.bot) updateStatusBar(data.bot);
+  // Show live available speed next to the cap field
+  const avail = data.nh_market?.EQUIHASH?.available_gsol;
+  const hint = document.getElementById('availSpeedHint');
+  if (hint && avail != null) hint.textContent = `(market: ${avail.toFixed(4)} GSol/s available)`;
 }
 
 function updateStatusBar(bot) {
@@ -518,9 +531,11 @@ async function loadBotConfig() {
   document.getElementById('cfgBidStrategy').value = cfgState.bid_strategy       ?? 'cheapest_profitable';
   document.getElementById('cfgOrderBtc').value    = cfgState.order_amount_btc   ?? '0.001';
   document.getElementById('cfgLimitGsol').value   = cfgState.order_limit_gsol   ?? 0.003;
+  document.getElementById('cfgMaxLimit').value    = cfgState.max_limit_gsol     ?? 0;
   document.getElementById('cfgMaxBid').value      = cfgState.max_bid_usd        ?? 26000;
   document.getElementById('cfgZecOps').value      = cfgState.zec_ops_pct        ?? 30;
   document.getElementById('cfgNhThreshold').value = cfgState.nh_btc_threshold   ?? 0.005;
+  document.getElementById('cfgReprice').value     = Math.round((cfgState.reprice_scale ?? 0.25) * 100);
   if (cfgState.binance) {
     document.getElementById('bnKey').value     = cfgState.binance.api_key     || '';
     document.getElementById('bnZecAddr').value = cfgState.binance.zec_address || '';
@@ -631,9 +646,11 @@ document.getElementById('btnSave').onclick = async () => {
     bid_strategy: document.getElementById('cfgBidStrategy').value,
     order_amount_btc: document.getElementById('cfgOrderBtc').value,
     order_limit_gsol: lim,
+    max_limit_gsol: parseFloat(document.getElementById('cfgMaxLimit').value) || 0,
     max_bid_usd: parseFloat(document.getElementById('cfgMaxBid').value),
     zec_ops_pct: parseInt(document.getElementById('cfgZecOps').value),
     nh_btc_threshold: parseFloat(document.getElementById('cfgNhThreshold').value),
+    reprice_scale: parseFloat(document.getElementById('cfgReprice').value) / 100,
   };
   const r = await fetch('/api/bot/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const d = await r.json();

@@ -43,6 +43,8 @@ let botConfig = loadBotConfig();
 let botLog = [];       // last 200 entries
 let botStatus = { enabled: false, slots_active: 0, last_cycle: null, nh_btc: null, binance_zec: null, binance_usdc: null };
 let botTimer = null;
+let pendingNhDeposit = null; // { expectedBtc, sentAt } — set after Binance→NH withdrawal, cleared when NH available balance confirms
+let botOrderMeta = {};       // orderId → { placed_arb, placed_market_btc } — for reprice scale tracking
 
 // ── Config I/O ────────────────────────────────────────────────────────────
 function loadConfig() {
@@ -65,7 +67,8 @@ function loadBotConfig() {
   const defaults = {
     enabled: false, max_slots: 3, min_arb_ratio: 1.15, wait_for_arb: true,
     bid_strategy: 'cheapest_profitable', max_bid_usd: 26000,
-    order_amount_btc: '0.001', order_limit_gsol: 0.003, zec_ops_pct: 30, nh_btc_threshold: 0.005,
+    order_amount_btc: '0.001', order_limit_gsol: 0.003, max_limit_gsol: 0, zec_ops_pct: 30, nh_btc_threshold: 0.005,
+    reprice_scale: 0.25,
     binance: { api_key: '', api_secret: '', zec_address: '' },
   };
   // NH platform minimums (from GET /main/api/v2/public/buy/info)
@@ -175,9 +178,13 @@ async function runBotCycle() {
       binanceRequest('GET', '/api/v3/account', {}),
     ]);
 
-    const nhBtc = nhBtcRes.status === 'fulfilled' && nhBtcRes.value.status === 200
+    const nhBtcTotal = nhBtcRes.status === 'fulfilled' && nhBtcRes.value.status === 200
+      ? parseFloat(nhBtcRes.value.body.total?.totalBalance || 0)
+      : null;
+    const nhBtcAvail = nhBtcRes.status === 'fulfilled' && nhBtcRes.value.status === 200
       ? parseFloat(nhBtcRes.value.body.total?.available || 0)
       : null;
+    const nhBtc = nhBtcTotal; // alias used for threshold checks and display
 
     const allNhOrders = nhOrdersRes.status === 'fulfilled' && nhOrdersRes.value.status === 200
       ? (nhOrdersRes.value.body.list || [])
@@ -204,12 +211,37 @@ async function runBotCycle() {
       binance_usdc: bnUsdc,
     };
 
-    botLogEntry(`status: NH BTC=${nhBtc ?? 'n/a'} Binance ZEC=${bnZec} USDC=${bnUsdc} slots=${botOrders.length}/${cfg.max_slots}`);
+    // ── Pending NH deposit check ──
+    // Normal blockchain confirmation: ~30 min. Compliance hold: hours/days (manual).
+    const DEPOSIT_WARN_MS    = 60 * 60 * 1000;  // 1 hour — warn, may need manual action on NH
+    const DEPOSIT_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours — give up, don't block forever
+    if (pendingNhDeposit !== null) {
+      const elapsedMin = Math.round((Date.now() - pendingNhDeposit.sentAt) / 60000);
+      if (nhBtcAvail !== null && nhBtcAvail >= pendingNhDeposit.expectedBtc * 0.90) {
+        botLogEntry(`NH deposit confirmed: ${nhBtcAvail} BTC now available (waited ${elapsedMin}min)`);
+        pendingNhDeposit = null;
+      } else if (Date.now() - pendingNhDeposit.sentAt > DEPOSIT_TIMEOUT_MS) {
+        botLogEntry(`⚠ NH deposit not confirmed after 24h — resuming anyway (avail=${nhBtcAvail}). Check NiceHash manually.`);
+        pendingNhDeposit = null;
+      } else if (Date.now() - pendingNhDeposit.sentAt > DEPOSIT_WARN_MS && !pendingNhDeposit.warnedKyc) {
+        pendingNhDeposit.warnedKyc = true;
+        botLogEntry(`⚠ NH deposit still pending after ${elapsedMin}min — NiceHash may require manual action (source-of-funds / KYC check). Log in to NiceHash and check your deposit status.`);
+      } else {
+        botLogEntry(`waiting for NH deposit: expecting ${pendingNhDeposit.expectedBtc} BTC, avail=${nhBtcAvail ?? 'n/a'} (${elapsedMin}min elapsed)`);
+      }
+    }
+
+    const nhBtcPendingStr = nhBtcAvail !== null && nhBtcTotal !== null && nhBtcTotal > nhBtcAvail
+      ? ` (${(nhBtcTotal - nhBtcAvail).toFixed(8)} pending)`
+      : '';
+    botLogEntry(`status: NH BTC=${nhBtc ?? 'n/a'}${nhBtcPendingStr} Binance ZEC=${bnZec} USDC=${bnUsdc} slots=${botOrders.length}/${cfg.max_slots}`);
 
     const arb = liveCache.zec_arb?.arb_ratio || 0;
 
-    // ── Order management ──
-    if (arb < 1.0 && botOrders.length > 0) {
+    // ── Order management — skip if NH deposit still pending ──
+    if (pendingNhDeposit !== null) {
+      botLogEntry('order placement deferred — waiting for NH deposit to clear');
+    } else if (arb < 1.0 && botOrders.length > 0) {
       botLogEntry(`arb=${arb.toFixed(4)} < 1.0 — cancelling ${botOrders.length} bot order(s)`);
       for (const o of botOrders) {
         try {
@@ -221,22 +253,57 @@ async function runBotCycle() {
       }
     } else if (arb < cfg.min_arb_ratio && cfg.wait_for_arb) {
       botLogEntry(`waiting for arb ≥ ${cfg.min_arb_ratio}× (current ${arb.toFixed(4)}×)`);
-    } else if (arb >= cfg.min_arb_ratio && botOrders.length < cfg.max_slots) {
-      // Place new order
-      const slots_needed = cfg.max_slots - botOrders.length;
-      for (let i = 0; i < slots_needed; i++) {
-        try {
-          await placeBotOrder(cfg, arb);
-        } catch (e) {
-          botLogEntry(`order placement error: ${e.message}`);
-          break;
+    } else {
+      // ── Reprice check: cancel if arb improved by >= reprice_scale since order was placed ──
+      const repriceScale  = cfg.reprice_scale ?? 0.25; // default +25%
+      const marketBtc     = liveCache.nh_market?.EQUIHASH?.btc || 0;
+      const minLimitGsol  = cfg.order_limit_gsol || 0.003;
+
+      // Available fillable hashrate at current market price (orders actively hashing or with rigs)
+      const availableAtMarket = (orderbooks.EQUIHASH || [])
+        .filter(o => o.fillable && parseFloat(o.bid_btc || 0) <= marketBtc * 1.05)
+        .reduce((sum, o) => sum + (parseFloat(o.limit_gsol || o.limit || 0)), 0);
+
+      let cancelledForReprice = 0;
+      for (const o of botOrders) {
+        const meta = botOrderMeta[o.id];
+        if (!meta) continue; // no baseline (order placed before this session)
+        const arbGain = arb > 0 && meta.placed_arb > 0 ? arb / meta.placed_arb : 0;
+        if (arbGain >= 1 + repriceScale) {
+          if (availableAtMarket >= minLimitGsol) {
+            try {
+              await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
+              delete botOrderMeta[o.id];
+              cancelledForReprice++;
+              botLogEntry(`reprice: arb rose ${(meta.placed_arb).toFixed(4)}→${arb.toFixed(4)} (+${((arbGain-1)*100).toFixed(0)}%) with ${availableAtMarket.toFixed(4)} GSol/s available — cancelled order ${o.id}, re-placing at better arb`);
+            } catch (e) {
+              botLogEntry(`reprice cancel error ${o.id}: ${e.message}`);
+            }
+          } else {
+            botLogEntry(`reprice: arb rose +${((arbGain-1)*100).toFixed(0)}% but only ${availableAtMarket.toFixed(4)} GSol/s available at market — keeping order ${o.id}`);
+          }
+        }
+      }
+
+      // ── Place new orders to fill empty slots (including just-cancelled reprice slots) ──
+      const activeAfterReprice = botOrders.length - cancelledForReprice;
+      if (arb >= cfg.min_arb_ratio && activeAfterReprice < cfg.max_slots) {
+        const slots_needed = cfg.max_slots - activeAfterReprice;
+        for (let i = 0; i < slots_needed; i++) {
+          try {
+            await placeBotOrder(cfg, arb);
+          } catch (e) {
+            botLogEntry(`order placement error: ${e.message}`);
+            break;
+          }
         }
       }
     }
 
     // ── Funding check (NH BTC low) → sell ops% ZEC→BTC on Binance, withdraw to NH ──
+    // Skip if a deposit is already in-flight (don't double-fund)
     let zecAfterFunding = bnZec;
-    if (nhBtc !== null && nhBtc < cfg.nh_btc_threshold && bnZec > 0.01) {
+    if (pendingNhDeposit === null && nhBtc !== null && nhBtc < cfg.nh_btc_threshold && bnZec > 0.01) {
       const opsZec = +(bnZec * (cfg.zec_ops_pct / 100)).toFixed(8);
       await fundNiceHash(opsZec);
       zecAfterFunding = +(bnZec - opsZec).toFixed(8);
@@ -261,12 +328,26 @@ async function placeBotOrder(cfg, arb) {
   const btcPrice = liveCache.prices.btc;
   const eqMkt   = liveCache.nh_market.EQUIHASH;
 
-  // bid = cheapest profitable price: market price minus a small buffer (~$100 / btcPrice)
-  const bufferBtc = 100 / btcPrice;
-  const bidBtc = Math.max(0, eqMkt.btc - bufferBtc);
+  // Bid = min fill price + $50 premium.
+  // Bidding below min_fill_btc gets zero hashrate (all miners already allocated to higher bids).
+  // A $50 premium above the cheapest paying order is enough to attract those miners to us.
+  const premiumBtc  = 50 / btcPrice;
+  const minFillBtc  = eqMkt.min_fill_btc || eqMkt.btc;
+  const bidBtc      = +(minFillBtc + premiumBtc).toFixed(8);
 
   if (bidBtc * btcPrice > cfg.max_bid_usd) {
     botLogEntry(`bid $${(bidBtc * btcPrice).toFixed(0)} > max_bid_usd $${cfg.max_bid_usd} — skipping`);
+    return;
+  }
+
+  // ── Edge check: verify arb at our specific bid before committing ──
+  // Global arb uses cheapest alive order (market price), but we may bid lower.
+  // Recalculate with our actual bid to be sure we have positive edge.
+  const actualUsdPerUnit = liveCache.zec_arb?.actual_usd_per_unit || 0;
+  const NH_FEE = 1.03;
+  const arbAtBid = actualUsdPerUnit > 0 ? actualUsdPerUnit / (bidBtc * btcPrice * NH_FEE) : 0;
+  if (arbAtBid < cfg.min_arb_ratio) {
+    botLogEntry(`no edge at bid ${bidBtc.toFixed(8)} BTC: arb=${arbAtBid.toFixed(4)}× < min ${cfg.min_arb_ratio}× — pausing, will retry next cycle`);
     return;
   }
 
@@ -275,7 +356,14 @@ async function placeBotOrder(cfg, arb) {
   // NH platform minimums: minAmount=0.001 BTC, minLimit=0.003 GSol/s (EQUIHASH)
   const NH_MIN_AMOUNT = 0.001;
   const NH_MIN_LIMIT  = 0.003;
-  const limitGsol   = Math.max(NH_MIN_LIMIT, cfg.order_limit_gsol || NH_MIN_LIMIT);
+
+  // Auto-limit: use available market speed, capped by max_limit_gsol config.
+  // Leave a 10% buffer so we don't grab the entire pool.
+  const availableGsol = eqMkt.available_gsol || 0;
+  const maxLimitCap   = cfg.max_limit_gsol > 0 ? cfg.max_limit_gsol : Infinity;
+  const autoLimit     = +(availableGsol * 0.90).toFixed(6);
+  const limitGsol     = Math.max(NH_MIN_LIMIT, Math.min(autoLimit, maxLimitCap));
+
   const amountBtc   = Math.max(NH_MIN_AMOUNT, parseFloat(cfg.order_amount_btc));
   const costPerDay  = limitGsol * bidBtc;  // BTC/day at full limit
   const cycleHours  = costPerDay > 0 ? +(amountBtc / costPerDay * 24).toFixed(1) : '?';
@@ -297,7 +385,10 @@ async function placeBotOrder(cfg, arb) {
   const result = await nhRequest('POST', '/main/api/v2/hashpower/order', '', body);
   if (result.status === 200 || result.status === 201) {
     const id = result.body.id || '?';
-    botLogEntry(`placed order ${id} bid=${bidBtc.toFixed(8)} BTC ($${(bidBtc*btcPrice).toFixed(0)}/GSol/day) limit=${limitGsol} GSol/s amount=${cfg.order_amount_btc} BTC ~${cycleHours}h cycle`);
+    const finishTs = new Date(Date.now() + cycleHours * 3600_000);
+    const finishStr = finishTs.toISOString().slice(0,16).replace('T',' ');
+    botOrderMeta[id] = { placed_arb: arb, placed_market_btc: eqMkt.btc };
+    botLogEntry(`placed order ${id} bid=${bidBtc.toFixed(8)} BTC ($${(bidBtc*btcPrice).toFixed(0)}/GSol/day) edge=${arbAtBid.toFixed(4)}× limit=${limitGsol} GSol/s amount=${cfg.order_amount_btc} BTC — duration: ${cycleHours}h finished: ${finishStr}`);
   } else {
     throw new Error(`NH order failed ${result.status}: ${JSON.stringify(result.body)}`);
   }
@@ -335,7 +426,8 @@ async function fundNiceHash(opsZec) {
       coin: 'BTC', network: 'BTC', address: nhBtcAddr, amount: btcGross.toFixed(8),
     });
     if (wdResult.status === 200) {
-      botLogEntry(`Sent ${btcGross} BTC → NH receives ${nhReceives} BTC (fee ~$${feeDollar}) id=${wdResult.body.id}`);
+      botLogEntry(`Sent ${btcGross} BTC → NH receives ${nhReceives} BTC (fee ~$${feeDollar}) id=${wdResult.body.id} — waiting for confirmation`);
+      pendingNhDeposit = { expectedBtc: nhReceives, sentAt: Date.now() };
     } else {
       botLogEntry(`BTC withdrawal error: ${JSON.stringify(wdResult.body)}`);
     }
@@ -498,6 +590,25 @@ async function fetchBlockchairStats(coin) {
   }
 }
 
+// ── Available hashrate at a given price point ─────────────────────────────
+// Returns GSol/s of miners we can attract by bidding AT targetPrice.
+// = paying speed of all orders priced BELOW targetPrice (those miners will switch to us).
+function availableSpeedAtPrice(rawOrders, targetPrice) {
+  return rawOrders
+    .filter(o => o.alive && parseFloat(o.price || 0) < targetPrice)
+    .reduce((sum, o) => sum + parseFloat(o.payingSpeed || o.acceptedCurrentSpeed || 0), 0);
+}
+
+// ── Minimum price that actually attracts hashrate ─────────────────────────
+// = cheapest order with meaningful paying speed (> 1 MSol/s).
+// Bidding below this gets zero fill.
+function minFillPrice(rawOrders) {
+  const paying = rawOrders
+    .filter(o => o.alive && parseFloat(o.payingSpeed || o.acceptedCurrentSpeed || 0) > 0.001)
+    .sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
+  return paying.length > 0 ? parseFloat(paying[0].price) : 0;
+}
+
 // ── Market price: cheapest alive STANDARD order in orderbook ─────────────
 // Using simplemultialgo/info is WRONG — its unit is ambiguous and it represents
 // NiceHash's internal seller payout, not the actual buyer market price.
@@ -652,7 +763,7 @@ async function refresh() {
       network: { zec_hr_gsol: +zecNetHR.toFixed(4), xmr_hr_gh: +xmrNetHR.toFixed(4), zec_block: zecBlock },
       halving: { block: halvingBlock, current_block: zecBlock, blocks_remaining: blocksLeft, days: halving_days },
       nh_market: {
-        EQUIHASH:      { btc: eqMkt.price,  usd: +(eqMkt.price  * btcPrice).toFixed(2), source: eqMkt.quality },
+        EQUIHASH:      { btc: eqMkt.price,  usd: +(eqMkt.price  * btcPrice).toFixed(2), source: eqMkt.quality, available_gsol: +availableSpeedAtPrice(rawEq, eqMkt.price + 50/btcPrice).toFixed(4), min_fill_btc: +minFillPrice(rawEq).toFixed(8) },
         RANDOMXMONERO: { btc: xmrMkt.price, usd: +(xmrMkt.price * btcPrice).toFixed(2), source: xmrMkt.quality },
       },
       zec_arb: zecArb,
