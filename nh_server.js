@@ -170,13 +170,13 @@ async function runBotCycle() {
 
     // Fetch NH BTC balance, NH active bot orders, Binance ZEC balance in parallel
     const [nhBtcRes, nhOrdersRes, bnAccRes] = await Promise.allSettled([
-      nhRequest('GET', '/main/api/v2/accounting/balance', 'currency=BTC'),
+      nhRequest('GET', '/main/api/v2/accounting/accounts2'),
       nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&op=LT&limit=100'),
       binanceRequest('GET', '/api/v3/account', {}),
     ]);
 
     const nhBtc = nhBtcRes.status === 'fulfilled' && nhBtcRes.value.status === 200
-      ? parseFloat(nhBtcRes.value.body.available || nhBtcRes.value.body.balance || 0)
+      ? parseFloat(nhBtcRes.value.body.total?.available || 0)
       : null;
 
     const allNhOrders = nhOrdersRes.status === 'fulfilled' && nhOrdersRes.value.status === 200
@@ -383,8 +383,7 @@ function stopBot() {
   broadcastBotStatus();
 }
 
-// Auto-start bot if it was enabled when server last ran
-if (botConfig.enabled) startBot();
+// Auto-start deferred to after wss is initialized (see server.listen)
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────
 function fetchJSON(url) {
@@ -852,6 +851,8 @@ server.listen(PORT, () => {
   console.log(`  Dashboard: http://localhost:${PORT}/nicehash/`);
   console.log(`  Bot:       http://localhost:${PORT}/bot/`);
   console.log(`  API live:  http://localhost:${PORT}/api/live`);
+  // Auto-start bot after wss is initialized
+  if (botConfig.enabled) startBot();
 });
 
 refresh();

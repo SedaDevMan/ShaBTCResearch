@@ -4,9 +4,12 @@
 
   const HASH = '66d5d06e4ffd42ac6765baafb597a3c6bc5b53c3'; // SHA1 of "2791"
   const SESSION_KEY = 'shabtc_unlocked';
+  const SESSION_TS  = 'shabtc_unlocked_at';
+  const TIMEOUT_MS  = 30 * 60 * 1000; // 30 minutes
 
-  // Already unlocked this session?
-  if (sessionStorage.getItem(SESSION_KEY) === '1') return;
+  // Already unlocked and within timeout?
+  const unlockedAt = parseInt(sessionStorage.getItem(SESSION_TS) || '0');
+  if (sessionStorage.getItem(SESSION_KEY) === '1' && Date.now() - unlockedAt < TIMEOUT_MS) return;
 
   // ── Build overlay ──────────────────────────────────────────────────────────
   const overlay = document.createElement('div');
@@ -133,6 +136,7 @@
   function tryUnlock() {
     if (sha1(input) === HASH) {
       sessionStorage.setItem(SESSION_KEY, '1');
+      sessionStorage.setItem(SESSION_TS, Date.now().toString());
       overlay.style.transition = 'opacity .3s';
       overlay.style.opacity = '0';
       setTimeout(() => { overlay.remove(); style.remove(); document.body.style.overflow = ''; }, 300);
