@@ -275,6 +275,9 @@
       <div class="btn-row">
         <button class="btn-blue" id="btnSavePool">Save Pool Settings</button>
       </div>
+      <div id="minersLink" style="display:none; margin-top:1rem; font-size:0.85rem; color:#64748b;">
+        Pool stats: <a id="minersLinkAnchor" href="#" target="_blank" rel="noopener" style="color:#3b82f6; word-break:break-all;"></a>
+      </div>
 
     </div>
 
@@ -428,7 +431,22 @@ async function loadNHConfig() {
     document.getElementById('poolPort').value = zec.port || '';
     document.getElementById('poolUser').value = zec.user || '';
     document.getElementById('poolPass').value = zec.pass || 'x';
+    updateMinersLink();
   } catch {}
+}
+
+function updateMinersLink() {
+  const addr = document.getElementById('poolUser').value.trim();
+  const el = document.getElementById('minersLink');
+  const a  = document.getElementById('minersLinkAnchor');
+  if (addr) {
+    const url = `https://zec.2miners.com/account/${addr}`;
+    a.href = url;
+    a.textContent = url;
+    el.style.display = '';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 async function loadLog() {
@@ -540,8 +558,11 @@ document.getElementById('btnSavePool').onclick = async () => {
   }}};
   const r = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const d = await r.json();
-  d.ok ? alert('Pool settings saved') : alert('Error: ' + JSON.stringify(d));
+  if (d.ok) { alert('Pool settings saved'); updateMinersLink(); }
+  else alert('Error: ' + JSON.stringify(d));
 };
+
+document.getElementById('poolUser').addEventListener('input', updateMinersLink);
 
 document.getElementById('btnSaveCreds').onclick = async () => {
   const body = { binance: {
