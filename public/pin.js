@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const HASH = '4a44dc15fbcf46399506571fcca9b513ffe36c68'; // SHA1 of "2791"
+  const HASH = '66d5d06e4ffd42ac6765baafb597a3c6bc5b53c3'; // SHA1 of "2791"
   const SESSION_KEY = 'shabtc_unlocked';
 
   // Already unlocked this session?

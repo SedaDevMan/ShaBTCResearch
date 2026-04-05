@@ -171,7 +171,7 @@ async function runBotCycle() {
     // Fetch NH BTC balance, NH active bot orders, Binance ZEC balance in parallel
     const [nhBtcRes, nhOrdersRes, bnAccRes] = await Promise.allSettled([
       nhRequest('GET', '/main/api/v2/accounting/balance', 'currency=BTC'),
-      nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&status=ACTIVE&size=100&page=0'),
+      nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&op=LT&limit=100'),
       binanceRequest('GET', '/api/v3/account', {}),
     ]);
 
@@ -389,12 +389,18 @@ function nhRequest(method, endpoint, query = '', body = '') {
   if (!key || !secret) return Promise.reject(new Error('No NH credentials'));
 
   const ts    = Date.now().toString();
-  const nonce = crypto.randomUUID();   // keep dashes — NH spec requires UUID format
-  // Official NiceHash HMAC format: key\0time\0nonce\0org_id\0METHOD\0path\0query\0\0body
-  const msg = [key, ts, nonce, config.org_id || '', method.toUpperCase(), endpoint, query, '', body || ''].join('\0');
+  const nonce = crypto.randomUUID();
+  const reqId = crypto.randomUUID();  // X-Request-Id must be different from X-Nonce
+  // Many NH endpoints require ts as a query param (cursor); append if not already present
+  const finalQuery = query
+    ? (query.includes('ts=') ? query : `${query}&ts=${ts}`)
+    : `ts=${ts}`;
+  // Official NiceHash HMAC format: key\0time\0nonce\0\0org_id\0\0METHOD\0path\0query[\0body]
+  let msg = [key, ts, nonce, '', config.org_id || '', '', method.toUpperCase(), endpoint, finalQuery].join('\0');
+  if (body) msg += '\0' + body;
   const sig = crypto.createHmac('sha256', secret).update(msg).digest('hex');
 
-  const qs = query ? `?${query}` : '';
+  const qs = finalQuery ? `?${finalQuery}` : '';
   const parsed = new URL(`${NH_API}${endpoint}${qs}`);
 
   const options = {
@@ -404,7 +410,7 @@ function nhRequest(method, endpoint, query = '', body = '') {
     headers: {
       'X-Time': ts,
       'X-Nonce': nonce,
-      'X-Request-Id': nonce,
+      'X-Request-Id': reqId,
       'X-Auth': `${key}:${sig}`,
       'X-Organization-Id': config.org_id || '',
       'Content-Type': 'application/json',
@@ -668,7 +674,7 @@ app.get('/api/orderbook', (req, res) => {
 app.get('/api/myorders', async (req, res) => {
   const algo = req.query.algo || 'EQUIHASH';
   try {
-    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', `algorithm=${algo}&status=ACTIVE&size=50&page=0`);
+    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', `algorithm=${algo}&op=LT&limit=100`);
     res.status(result.status).json(result.body);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -712,7 +718,7 @@ app.post('/api/config', (req, res) => {
 app.get('/api/bot/status', async (req, res) => {
   // Also fetch live NH active bot orders for the UI
   try {
-    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&status=ACTIVE&size=100&page=0');
+    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&op=LT&limit=100');
     const orders = result.status === 200
       ? (result.body.list || []).filter(o => o.note === 'shabtc-bot')
       : [];
@@ -753,7 +759,7 @@ app.post('/api/bot/stop', async (req, res) => {
   stopBot();
   if (req.body && req.body.cancel_orders) {
     try {
-      const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&status=ACTIVE&size=100&page=0');
+      const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&op=LT&limit=100');
       const orders = result.status === 200 ? (result.body.list || []).filter(o => o.note === 'shabtc-bot') : [];
       for (const o of orders) {
         await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`).catch(() => {});
