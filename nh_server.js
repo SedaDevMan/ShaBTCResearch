@@ -319,20 +319,23 @@ async function fundNiceHash(opsZec) {
     const btcGross = +fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0).toFixed(8);
     botLogEntry(`Sold ${opsZec} ZEC → ${btcGross} BTC`);
 
-    // Step 2: withdraw BTC to NiceHash (BTC network fee ~0.0001 BTC)
-    const BTC_FEE = 0.0001;
-    const btcToSend = +(btcGross - BTC_FEE).toFixed(8);
-    if (btcToSend <= 0) {
-      botLogEntry(`BTC amount after fee is ${btcToSend} — too small, skipping withdrawal`);
+    // Step 2: withdraw BTC to NiceHash
+    // Binance auto-deducts fee from withdrawal amount; we just specify btcGross.
+    // Real Binance BTC fee = 0.000015 BTC; minimum withdrawal = 0.00012 BTC.
+    const BTC_WITHDRAW_FEE = 0.000015;
+    const BTC_MIN_WITHDRAW  = 0.00012;
+    if (btcGross < BTC_MIN_WITHDRAW) {
+      botLogEntry(`BTC too small to withdraw (${btcGross} < min ${BTC_MIN_WITHDRAW}) — skipping`);
       return;
     }
     const nhBtcAddr = await getNHBtcDepositAddress();
-    const feeDollar = (BTC_FEE * (liveCache?.prices?.btc || 80000)).toFixed(0);
+    const nhReceives = +(btcGross - BTC_WITHDRAW_FEE).toFixed(8);
+    const feeDollar  = (BTC_WITHDRAW_FEE * (liveCache?.prices?.btc || 80000)).toFixed(0);
     const wdResult = await binanceRequest('POST', '/sapi/v1/capital/withdraw/apply', {
-      coin: 'BTC', network: 'BTC', address: nhBtcAddr, amount: btcToSend.toFixed(8),
+      coin: 'BTC', network: 'BTC', address: nhBtcAddr, amount: btcGross.toFixed(8),
     });
     if (wdResult.status === 200) {
-      botLogEntry(`Sent ${btcToSend} BTC to NiceHash (fee ~$${feeDollar}) id=${wdResult.body.id}`);
+      botLogEntry(`Sent ${btcGross} BTC → NH receives ${nhReceives} BTC (fee ~$${feeDollar}) id=${wdResult.body.id}`);
     } else {
       botLogEntry(`BTC withdrawal error: ${JSON.stringify(wdResult.body)}`);
     }
