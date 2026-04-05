@@ -14,7 +14,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const CONFIG_FILE = path.join(__dirname, 'nh_config.json');
 const BOT_CONFIG_FILE = path.join(__dirname, 'bot_config.json');
 const REFRESH_INTERVAL = 30_000;
-const BOT_CYCLE_INTERVAL = 60_000;
+const BOT_CYCLE_INTERVAL = 20_000;
 
 const BINANCE_API = 'https://api.binance.com';
 
