@@ -281,6 +281,24 @@ async function runBotCycle() {
       let cancelledForReprice = 0;
       for (const o of botOrders) {
         const meta = botOrderMeta[o.id];
+
+        // ── Dead-order check: cancel if 0 miners for > 2 minutes since placement ──
+        // Miners are sticky — if no one joined within 2 min the bid is too low for this market.
+        // Cancel now and let the next cycle rebid with fresh market data.
+        const ageMs    = meta?.placed_at ? Date.now() - meta.placed_at : 0;
+        const noMiners = parseInt(o.rigsCount || 0) === 0 && parseFloat(o.acceptedCurrentSpeed || 0) === 0;
+        if (noMiners && ageMs > 2 * 60 * 1000) {
+          try {
+            await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
+            delete botOrderMeta[o.id];
+            cancelledForReprice++;
+            botLogEntry(`dead order ${o.id}: 0 miners for ${Math.round(ageMs/60000)}min at bid ${parseFloat(o.price).toFixed(4)} BTC — cancelled, will rebid`);
+          } catch (e) {
+            botLogEntry(`dead order cancel error ${o.id}: ${e.message}`);
+          }
+          continue;
+        }
+
         if (!meta) continue; // no baseline (order placed before this session)
         const arbGain = arb > 0 && meta.placed_arb > 0 ? arb / meta.placed_arb : 0;
         if (arbGain >= 1 + repriceScale) {
@@ -448,7 +466,7 @@ async function placeBotOrder(cfg, arb) {
     const id = result.body.id || '?';
     const finishTs = new Date(Date.now() + cycleHours * 3600_000);
     const finishStr = finishTs.toISOString().slice(0,16).replace('T',' ');
-    botOrderMeta[id] = { placed_arb: arb, placed_market_btc: eqMkt.btc };
+    botOrderMeta[id] = { placed_arb: arb, placed_market_btc: eqMkt.btc, placed_at: Date.now() };
     botLogEntry(`placed order ${id} bid=${bidBtc.toFixed(8)} BTC ($${(bidBtc*btcPrice).toFixed(0)}/GSol/day) edge=${arbAtBid.toFixed(4)}× limit=${limitGsol} GSol/s amount=${cfg.order_amount_btc} BTC — duration: ${cycleHours}h finished: ${finishStr}`);
   } else {
     throw new Error(`NH order failed ${result.status}: ${JSON.stringify(result.body)}`);
