@@ -374,10 +374,10 @@
       <p class="section-title" style="margin-top:1.75rem;">Order History <button class="btn-gray" id="btnRefreshOrders" style="padding:.2rem .6rem;font-size:.72rem;margin-left:.5rem;">↻ Refresh</button></p>
       <table>
         <thead>
-          <tr><th>Date</th><th>Bid BTC</th><th>Speed GSol/s</th><th>Paid BTC</th><th>Earned BTC</th><th>Status</th></tr>
+          <tr><th>Placed</th><th>Closed</th><th>Duration</th><th>Bid BTC/GSol</th><th>Speed GSol/s</th><th>Paid BTC</th><th>Status</th></tr>
         </thead>
         <tbody id="orderHistoryBody">
-          <tr class="empty-row"><td colspan="6">Loading…</td></tr>
+          <tr class="empty-row"><td colspan="7">Loading…</td></tr>
         </tbody>
       </table>
 
@@ -604,6 +604,14 @@ async function loadLog() {
   loadTxnHistory();
 }
 
+function fmtDuration(ms) {
+  if (!ms || ms < 0) return '—';
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
 async function loadOrderHistory() {
   try {
     const r = await fetch('/api/myorders?algo=EQUIHASH'); if (!r.ok) return;
@@ -611,22 +619,46 @@ async function loadOrderHistory() {
     const orders = (data.list || []).sort((a,b) => new Date(b.startTs||0) - new Date(a.startTs||0));
     const tbody = document.getElementById('orderHistoryBody');
     if (!orders.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No orders yet</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No orders yet</td></tr>';
       return;
     }
+    const now = Date.now();
     tbody.innerHTML = orders.map(o => {
       const status = o.status?.code || o.status || '?';
-      const date = o.startTs ? new Date(o.startTs).toLocaleString() : '—';
-      const paid = parseFloat(o.payedAmount||0).toFixed(6);
-      const speed = parseFloat(o.acceptedCurrentSpeed||o.limit||0).toFixed(5);
-      const bid = parseFloat(o.price||0).toFixed(4);
-      // Earned = total mined (NH shows this in order's 'payedAmount' for completed, 'amount' remaining for active)
-      const earned = o.rigsCount > 0 || status === 'COMPLETED' ? paid : '—';
-      const cls = status === 'ACTIVE' ? 'color:#22c55e' : status === 'COMPLETED' ? 'color:#94a3b8' : 'color:#f59e0b';
-      return `<tr><td>${date}</td><td>${bid}</td><td>${speed}</td><td>${paid}</td><td>${earned}</td><td style="${cls};font-weight:600;">${status}</td></tr>`;
+      const isActive = status === 'ACTIVE';
+      const isClosed = !isActive;
+
+      const placed = o.startTs ? new Date(o.startTs).toLocaleString() : '—';
+
+      // Closed time: endTs if finished, else "running"
+      const closedTs = o.endTs ? new Date(o.endTs) : null;
+      const closedStr = isClosed && closedTs ? closedTs.toLocaleString() : (isActive ? '<span style="color:#22c55e">running</span>' : '—');
+
+      // Duration: endTs - startTs for closed; elapsed for active
+      const startMs = o.startTs ? new Date(o.startTs).getTime() : 0;
+      const endMs   = closedTs ? closedTs.getTime() : (isActive ? now : 0);
+      const durStr  = startMs ? fmtDuration(endMs - startMs) : '—';
+
+      const bid   = parseFloat(o.price||0).toFixed(4);
+      // Speed: actual for active, limit for closed (actual goes 0 after close)
+      const speed = isActive
+        ? parseFloat(o.acceptedCurrentSpeed||0).toFixed(4)
+        : parseFloat(o.limit||0).toFixed(4);
+      const paid  = parseFloat(o.payedAmount||0).toFixed(6);
+
+      const cls = isActive ? 'color:#22c55e' : status === 'COMPLETED' ? 'color:#94a3b8' : status.includes('CANCEL') ? 'color:#f59e0b' : 'color:#64748b';
+      return `<tr>
+        <td style="white-space:nowrap;color:#94a3b8;">${placed}</td>
+        <td style="white-space:nowrap;color:#94a3b8;">${closedStr}</td>
+        <td>${durStr}</td>
+        <td>${bid}</td>
+        <td>${speed}</td>
+        <td>${paid}</td>
+        <td style="${cls};font-weight:600;">${status}</td>
+      </tr>`;
     }).join('');
   } catch(e) {
-    document.getElementById('orderHistoryBody').innerHTML = `<tr class="empty-row"><td colspan="6">Error: ${esc(e.message)}</td></tr>`;
+    document.getElementById('orderHistoryBody').innerHTML = `<tr class="empty-row"><td colspan="7">Error: ${esc(e.message)}</td></tr>`;
   }
 }
 
