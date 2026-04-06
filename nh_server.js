@@ -321,6 +321,49 @@ async function runBotCycle() {
   broadcastBotStatus();
 }
 
+// ── Get or create NiceHash pool entry, return its UUID ────────────────────
+// NH orders require a poolId (UUID), not inline pool credentials.
+// We cache the ID in nh_config.json to avoid re-creating on every cycle.
+async function ensureNhPool() {
+  const pool = config.pools?.EQUIHASH;
+  if (!pool) throw new Error('No EQUIHASH pool configured in nh_config.json');
+  if (pool.pool_id) return pool.pool_id;
+
+  // Check if a matching pool already exists on NH
+  const listRes = await nhRequest('GET', '/main/api/v2/pools', 'size=100&page=0&algorithm=EQUIHASH');
+  if (listRes.status === 200) {
+    const existing = (listRes.body.list || []).find(p =>
+      p.stratumHostname === pool.host &&
+      p.stratumPort === parseInt(pool.port) &&
+      p.username === pool.user
+    );
+    if (existing) {
+      config.pools.EQUIHASH.pool_id = existing.id;
+      saveConfig({ pools: config.pools });
+      botLogEntry(`NH pool found: ${existing.id}`);
+      return existing.id;
+    }
+  }
+
+  // Create it
+  const createRes = await nhRequest('POST', '/main/api/v2/pools', '', JSON.stringify({
+    algorithm:       'EQUIHASH',
+    name:            '2miners-zec',
+    stratumHostname: pool.host,
+    stratumPort:     parseInt(pool.port),
+    username:        pool.user,
+    password:        pool.pass || 'x',
+  }));
+  if (createRes.status === 200 || createRes.status === 201) {
+    const poolId = createRes.body.id;
+    config.pools.EQUIHASH.pool_id = poolId;
+    saveConfig({ pools: config.pools });
+    botLogEntry(`NH pool created: ${poolId}`);
+    return poolId;
+  }
+  throw new Error(`NH pool create failed ${createRes.status}: ${JSON.stringify(createRes.body)}`);
+}
+
 async function placeBotOrder(cfg, arb) {
   const pool = config.pools && config.pools.EQUIHASH;
   if (!pool) throw new Error('No EQUIHASH pool configured in nh_config.json');
@@ -333,7 +376,8 @@ async function placeBotOrder(cfg, arb) {
   // A $50 premium above the cheapest paying order is enough to attract those miners to us.
   const premiumBtc  = 50 / btcPrice;
   const minFillBtc  = eqMkt.min_fill_btc || eqMkt.btc;
-  const bidBtc      = +(minFillBtc + premiumBtc).toFixed(8);
+  // NH requires price precision ≤ 4 decimal places (orderbook prices all follow this pattern)
+  const bidBtc      = +(Math.round((minFillBtc + premiumBtc) * 10000) / 10000).toFixed(8);
 
   if (bidBtc * btcPrice > cfg.max_bid_usd) {
     botLogEntry(`bid $${(bidBtc * btcPrice).toFixed(0)} > max_bid_usd $${cfg.max_bid_usd} — skipping`);
@@ -368,18 +412,21 @@ async function placeBotOrder(cfg, arb) {
   const costPerDay  = limitGsol * bidBtc;  // BTC/day at full limit
   const cycleHours  = costPerDay > 0 ? +(amountBtc / costPerDay * 24).toFixed(1) : '?';
 
+  const poolId = await ensureNhPool();
+
   const body = JSON.stringify({
-    market:       'EU',
-    algorithm:    { algorithm: 'EQUIHASH' },
-    amount:       cfg.order_amount_btc,
-    price:        bidBtc.toFixed(8),
-    limit:        limitGsol.toString(),
-    type:         'STANDARD',
-    poolHostname: pool.host,
-    poolPort:     parseInt(pool.port),
-    username:     pool.user,
-    password:     pool.pass || 'x',
-    note:         'shabtc-bot',
+    market:               'EU',
+    algorithm:            'EQUIHASH',
+    amount:               amountBtc.toFixed(8),
+    price:                bidBtc.toFixed(8),
+    limit:                limitGsol.toFixed(8),
+    poolId,
+    type:                 'STANDARD',
+    marketFactor:         '1000000000.00000000',
+    displayMarketFactor:  'GSol',
+    priceFactor:          '1000000000.00000000',
+    displayPriceFactor:   'GSol',
+    note:                 'shabtc-bot',
   });
 
   const result = await nhRequest('POST', '/main/api/v2/hashpower/order', '', body);
