@@ -44,7 +44,9 @@ let botLog = [];       // last 200 entries
 let botStatus = { enabled: false, slots_active: 0, last_cycle: null, nh_btc: null, binance_zec: null, binance_usdc: null };
 let botTimer = null;
 let pendingNhDeposit = null; // { expectedBtc, sentAt } — set after Binance→NH withdrawal, cleared when NH available balance confirms
-let botOrderMeta = {};       // orderId → { placed_arb, placed_market_btc } — for reprice scale tracking
+let botOrderMeta = {};       // orderId → { placed_arb, placed_market_btc, placed_at }
+let deadOrderStreak = 0;     // consecutive dead orders (0 miners); resets when an order fills
+let deadOrderCooldownUntil = 0; // epoch ms — don't place new orders until this time
 
 // ── Config I/O ────────────────────────────────────────────────────────────
 function loadConfig() {
@@ -274,23 +276,34 @@ async function runBotCycle() {
       let cancelledDead = 0;
       for (const o of botOrders) {
         const meta   = botOrderMeta[o.id];
-        const ageMs  = meta?.placed_at ? Date.now() - meta.placed_at : 0;
+        const placedAt = meta?.placed_at || (o.startTs ? new Date(o.startTs).getTime() : 0);
+        const ageMs  = placedAt ? Date.now() - placedAt : 0;
         const noMiners = parseInt(o.rigsCount || 0) === 0 && parseFloat(o.acceptedCurrentSpeed || 0) === 0;
         if (noMiners && ageMs > 2 * 60 * 1000) {
           try {
             await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
             delete botOrderMeta[o.id];
             cancelledDead++;
-            botLogEntry(`dead order ${o.id}: 0 miners for ${Math.round(ageMs/60000)}min at bid ${parseFloat(o.price).toFixed(4)} BTC — cancelled, will rebid`);
+            deadOrderStreak++;
+            // Exponential back-off: 15min × streak (15, 30, 45 …) capped at 2h
+            const cooldownMs = Math.min(deadOrderStreak * 15 * 60 * 1000, 2 * 60 * 60 * 1000);
+            deadOrderCooldownUntil = Date.now() + cooldownMs;
+            botLogEntry(`dead order ${o.id}: 0 miners for ${Math.round(ageMs/60000)}min — cancelled (streak=${deadOrderStreak}, pausing ${Math.round(cooldownMs/60000)}min before next bid)`);
           } catch (e) {
             botLogEntry(`dead order cancel error ${o.id}: ${e.message}`);
           }
+        } else if (!noMiners) {
+          // Order has miners — reset streak
+          deadOrderStreak = 0;
         }
       }
 
       // ── Place new orders to fill empty slots ──
       const activeAfterReprice = botOrders.length - cancelledDead;
-      if (arb >= cfg.min_arb_ratio && activeAfterReprice < cfg.max_slots) {
+      if (deadOrderCooldownUntil > Date.now()) {
+        const waitMin = Math.round((deadOrderCooldownUntil - Date.now()) / 60000);
+        botLogEntry(`market too thin — pausing placement for ${waitMin}min more (streak=${deadOrderStreak})`);
+      } else if (arb >= cfg.min_arb_ratio && activeAfterReprice < cfg.max_slots) {
         const slots_needed = cfg.max_slots - activeAfterReprice;
         for (let i = 0; i < slots_needed; i++) {
           try {
