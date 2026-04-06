@@ -967,12 +967,18 @@ app.get('/api/bot/status', async (req, res) => {
       : [];
     const btcPrice = liveCache?.prices?.btc || 0;
     const enriched = orders.map(o => ({
-      id:       o.id,
-      market:   o.market || '?',
-      bid_btc:  parseFloat(o.price || 0),
-      bid_usd:  +(parseFloat(o.price || 0) * btcPrice).toFixed(2),
-      speed:    parseFloat(o.acceptedCurrentSpeed || 0),
-      active:   o.status?.code === 'ACTIVE',
+      id:        o.id,
+      market:    o.market || '?',
+      bid_btc:   parseFloat(o.price || 0),
+      bid_usd:   +(parseFloat(o.price || 0) * btcPrice).toFixed(2),
+      speed:     parseFloat(o.acceptedCurrentSpeed || 0),
+      limit:     parseFloat(o.limit || 0),
+      rigs:      parseInt(o.rigsCount || 0),
+      paid_btc:  parseFloat(o.payedAmount || 0),
+      start_ts:  o.startTs || null,
+      end_ts:    o.endTs   || null,
+      active:    o.status?.code === 'ACTIVE',
+      status:    o.status?.code || o.status || '?',
     }));
     res.json({ ...botStatus, orders: enriched });
   } catch (e) {

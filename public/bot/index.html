@@ -208,7 +208,7 @@
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Market</th><th>Bid USD/GSol/day</th><th>Speed (GSol/s)</th><th>Alive</th><th>Action</th>
+            <th>#</th><th>Started</th><th>Est. end</th><th>Bid USD/GSol</th><th>Speed / Limit</th><th>Rigs</th><th>Paid BTC</th><th>Status</th><th></th>
           </tr>
         </thead>
         <tbody id="ordersBody">
@@ -700,21 +700,32 @@ function renderOrders(orders) {
   const tbody = document.getElementById('ordersBody');
   const badge = document.getElementById('ordersBadge');
   if (!orders.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No active bot orders</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No active bot orders</td></tr>';
     badge.style.display = 'none';
     return;
   }
   badge.style.display = '';
   badge.textContent = orders.length;
-  tbody.innerHTML = orders.map((o, i) => `
-    <tr>
+  tbody.innerHTML = orders.map((o, i) => {
+    const started = o.start_ts ? new Date(o.start_ts).toLocaleString() : '—';
+    const ended   = o.end_ts   ? new Date(o.end_ts).toLocaleString()   : '—';
+    const speed   = Number(o.speed).toFixed(4);
+    const limit   = Number(o.limit).toFixed(4);
+    const hasMiners = o.rigs > 0;
+    const statusClr = hasMiners ? 'color:#22c55e' : 'color:#f59e0b';
+    const statusTxt = hasMiners ? `⛏ ${o.rigs} rigs` : '⏳ waiting';
+    return `<tr>
       <td>${i+1}</td>
-      <td>${esc(o.market||'?')}</td>
+      <td style="white-space:nowrap;color:#94a3b8;">${started}</td>
+      <td style="white-space:nowrap;color:#64748b;">${ended}</td>
       <td>$${Number(o.bid_usd).toFixed(0)}</td>
-      <td>${Number(o.speed).toFixed(5)}</td>
-      <td>${o.active ? '✅' : '⏳'}</td>
+      <td>${speed} / ${limit}</td>
+      <td style="${statusClr};font-weight:600;">${statusTxt}</td>
+      <td>${Number(o.paid_btc).toFixed(6)}</td>
+      <td style="${statusClr};">${esc(o.status)}</td>
       <td><button class="btn-red" style="padding:.25rem .7rem;font-size:.78rem;" onclick="cancelOrder('${o.id}')">Cancel</button></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 async function cancelOrder(id) {
