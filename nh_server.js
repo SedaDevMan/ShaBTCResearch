@@ -268,57 +268,28 @@ async function runBotCycle() {
     } else if (arb < cfg.min_arb_ratio && cfg.wait_for_arb) {
       botLogEntry(`waiting for arb ≥ ${cfg.min_arb_ratio}× (current ${arb.toFixed(4)}×)`);
     } else {
-      // ── Reprice check: cancel if arb improved by >= reprice_scale since order was placed ──
-      const repriceScale  = cfg.reprice_scale ?? 0.25; // default +25%
-      const marketBtc     = liveCache.nh_market?.EQUIHASH?.btc || 0;
-      const minLimitGsol  = cfg.order_limit_gsol || 0.003;
-
-      // Available fillable hashrate at current market price (orders actively hashing or with rigs)
-      const availableAtMarket = (orderbooks.EQUIHASH || [])
-        .filter(o => o.fillable && parseFloat(o.bid_btc || 0) <= marketBtc * 1.05)
-        .reduce((sum, o) => sum + (parseFloat(o.limit_gsol || o.limit || 0)), 0);
-
-      let cancelledForReprice = 0;
+      // ── Dead-order check: cancel if 0 miners for > 2 minutes since placement ──
+      // Each order costs ~$2.50 to place, so only cancel truly dead orders (no miners at all).
+      // Reprice-on-arb-improvement was removed — the $2.50 placement fee makes it not worth it.
+      let cancelledDead = 0;
       for (const o of botOrders) {
-        const meta = botOrderMeta[o.id];
-
-        // ── Dead-order check: cancel if 0 miners for > 2 minutes since placement ──
-        // Miners are sticky — if no one joined within 2 min the bid is too low for this market.
-        // Cancel now and let the next cycle rebid with fresh market data.
-        const ageMs    = meta?.placed_at ? Date.now() - meta.placed_at : 0;
+        const meta   = botOrderMeta[o.id];
+        const ageMs  = meta?.placed_at ? Date.now() - meta.placed_at : 0;
         const noMiners = parseInt(o.rigsCount || 0) === 0 && parseFloat(o.acceptedCurrentSpeed || 0) === 0;
         if (noMiners && ageMs > 2 * 60 * 1000) {
           try {
             await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
             delete botOrderMeta[o.id];
-            cancelledForReprice++;
+            cancelledDead++;
             botLogEntry(`dead order ${o.id}: 0 miners for ${Math.round(ageMs/60000)}min at bid ${parseFloat(o.price).toFixed(4)} BTC — cancelled, will rebid`);
           } catch (e) {
             botLogEntry(`dead order cancel error ${o.id}: ${e.message}`);
           }
-          continue;
-        }
-
-        if (!meta) continue; // no baseline (order placed before this session)
-        const arbGain = arb > 0 && meta.placed_arb > 0 ? arb / meta.placed_arb : 0;
-        if (arbGain >= 1 + repriceScale) {
-          if (availableAtMarket >= minLimitGsol) {
-            try {
-              await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
-              delete botOrderMeta[o.id];
-              cancelledForReprice++;
-              botLogEntry(`reprice: arb rose ${(meta.placed_arb).toFixed(4)}→${arb.toFixed(4)} (+${((arbGain-1)*100).toFixed(0)}%) with ${availableAtMarket.toFixed(4)} GSol/s available — cancelled order ${o.id}, re-placing at better arb`);
-            } catch (e) {
-              botLogEntry(`reprice cancel error ${o.id}: ${e.message}`);
-            }
-          } else {
-            botLogEntry(`reprice: arb rose +${((arbGain-1)*100).toFixed(0)}% but only ${availableAtMarket.toFixed(4)} GSol/s available at market — keeping order ${o.id}`);
-          }
         }
       }
 
-      // ── Place new orders to fill empty slots (including just-cancelled reprice slots) ──
-      const activeAfterReprice = botOrders.length - cancelledForReprice;
+      // ── Place new orders to fill empty slots ──
+      const activeAfterReprice = botOrders.length - cancelledDead;
       if (arb >= cfg.min_arb_ratio && activeAfterReprice < cfg.max_slots) {
         const slots_needed = cfg.max_slots - activeAfterReprice;
         for (let i = 0; i < slots_needed; i++) {
