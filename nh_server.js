@@ -301,8 +301,7 @@ async function runBotCycle() {
       // ── Place new orders to fill empty slots ──
       const activeAfterReprice = botOrders.length - cancelledDead;
       if (deadOrderCooldownUntil > Date.now()) {
-        const waitMin = Math.round((deadOrderCooldownUntil - Date.now()) / 60000);
-        botLogEntry(`market too thin — pausing placement for ${waitMin}min more (streak=${deadOrderStreak})`);
+        // silent cooldown — don't flood log every 20s cycle
       } else if (arb >= cfg.min_arb_ratio && activeAfterReprice < cfg.max_slots) {
         const slots_needed = cfg.max_slots - activeAfterReprice;
         for (let i = 0; i < slots_needed; i++) {
@@ -411,11 +410,30 @@ async function placeBotOrder(cfg, arb) {
     return;
   }
 
-  // Configurable hashrate limit — higher = faster cycle, lower timing risk.
-  // Estimated cycle hours = (order_amount_btc / (limit_gsol × bid_btc)) / 24h
-  // NH platform minimums: minAmount=0.001 BTC, minLimit=0.003 GSol/s (EQUIHASH)
+  // ── Pre-flight: check switchable STANDARD miner speed before paying $2.50 fee ──
+  // Fetch fresh orderbook (not cached) and sum payingSpeed of STANDARD orders below our bid.
+  // If no miners are available to switch to us, skip placement entirely.
   const NH_MIN_AMOUNT = 0.001;
   const NH_MIN_LIMIT  = 0.003;
+  try {
+    const freshOB = await fetchJSON(`${NH_API}/main/api/v2/hashpower/orderBook?algorithm=EQUIHASH&size=100&page=0`);
+    let freshOrders = [];
+    if (freshOB?.orders) freshOrders = freshOB.orders;
+    else if (freshOB?.stats) for (const loc of Object.values(freshOB.stats)) if (loc.orders) freshOrders.push(...loc.orders);
+    const switchableSpeed = freshOrders
+      .filter(o => o.alive && o.type === 'STANDARD' && parseFloat(o.price || 0) < bidBtc)
+      .reduce((sum, o) => sum + parseFloat(o.payingSpeed || 0), 0);
+    if (switchableSpeed < NH_MIN_LIMIT) {
+      botLogEntry(`pre-flight: no switchable STANDARD miners at bid ${bidBtc.toFixed(4)} BTC (${switchableSpeed.toFixed(6)} GSol/s) — skipping, $2.50 fee saved`);
+      return;
+    }
+    botLogEntry(`pre-flight: ${switchableSpeed.toFixed(5)} GSol/s switchable at bid ${bidBtc.toFixed(4)} BTC — proceeding`);
+  } catch (e) {
+    botLogEntry(`pre-flight orderbook fetch failed: ${e.message} — proceeding anyway`);
+  }
+
+  // Configurable hashrate limit — higher = faster cycle, lower timing risk.
+  // Estimated cycle hours = (order_amount_btc / (limit_gsol × bid_btc)) / 24h
 
   // Auto-limit: use available market speed, capped by max_limit_gsol config.
   // Leave a 10% buffer so we don't grab the entire pool.
@@ -867,6 +885,16 @@ app.get('/api/myorders', async (req, res) => {
   const algo = req.query.algo || 'EQUIHASH';
   try {
     const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', `algorithm=${algo}&op=LT&limit=100&ts=${Date.now()}`);
+    res.status(result.status).json(result.body);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// NH activity (deposits, withdrawals, earnings)
+app.get('/api/nh/activity', async (req, res) => {
+  try {
+    const result = await nhRequest('GET', '/main/api/v2/accounting/activity', 'limit=50');
     res.status(result.status).json(result.body);
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -371,24 +371,24 @@
       <div id="logContainer"></div>
 
       <!-- Order History -->
-      <p class="section-title" style="margin-top:1.75rem;">Order History</p>
+      <p class="section-title" style="margin-top:1.75rem;">Order History <button class="btn-gray" id="btnRefreshOrders" style="padding:.2rem .6rem;font-size:.72rem;margin-left:.5rem;">↻ Refresh</button></p>
       <table>
         <thead>
-          <tr><th>Date</th><th>Bid BTC</th><th>Limit GSol/s</th><th>Paid BTC</th><th>Status</th></tr>
+          <tr><th>Date</th><th>Bid BTC</th><th>Speed GSol/s</th><th>Paid BTC</th><th>Earned BTC</th><th>Status</th></tr>
         </thead>
         <tbody id="orderHistoryBody">
-          <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+          <tr class="empty-row"><td colspan="6">Loading…</td></tr>
         </tbody>
       </table>
 
-      <!-- Deposits & Withdrawals -->
-      <p class="section-title" style="margin-top:1.75rem;">Deposits &amp; Withdrawals</p>
+      <!-- NH Account Activity -->
+      <p class="section-title" style="margin-top:1.75rem;">NH Account Activity <button class="btn-gray" id="btnRefreshActivity" style="padding:.2rem .6rem;font-size:.72rem;margin-left:.5rem;">↻ Refresh</button></p>
       <table>
         <thead>
-          <tr><th>Time</th><th>Event</th></tr>
+          <tr><th>Time</th><th>Type</th><th>Amount</th><th>Currency</th><th>Note</th></tr>
         </thead>
         <tbody id="txnHistoryBody">
-          <tr class="empty-row"><td colspan="2">No transactions recorded yet</td></tr>
+          <tr class="empty-row"><td colspan="5">Loading…</td></tr>
         </tbody>
       </table>
 
@@ -611,35 +611,48 @@ async function loadOrderHistory() {
     const orders = (data.list || []).sort((a,b) => new Date(b.startTs||0) - new Date(a.startTs||0));
     const tbody = document.getElementById('orderHistoryBody');
     if (!orders.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No orders yet</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No orders yet</td></tr>';
       return;
     }
     tbody.innerHTML = orders.map(o => {
       const status = o.status?.code || o.status || '?';
       const date = o.startTs ? new Date(o.startTs).toLocaleString() : '—';
       const paid = parseFloat(o.payedAmount||0).toFixed(6);
-      const limit = parseFloat(o.limit||0).toFixed(5);
+      const speed = parseFloat(o.acceptedCurrentSpeed||o.limit||0).toFixed(5);
       const bid = parseFloat(o.price||0).toFixed(4);
+      // Earned = total mined (NH shows this in order's 'payedAmount' for completed, 'amount' remaining for active)
+      const earned = o.rigsCount > 0 || status === 'COMPLETED' ? paid : '—';
       const cls = status === 'ACTIVE' ? 'color:#22c55e' : status === 'COMPLETED' ? 'color:#94a3b8' : 'color:#f59e0b';
-      return `<tr><td>${date}</td><td>${bid}</td><td>${limit}</td><td>${paid}</td><td style="${cls};font-weight:600;">${status}</td></tr>`;
+      return `<tr><td>${date}</td><td>${bid}</td><td>${speed}</td><td>${paid}</td><td>${earned}</td><td style="${cls};font-weight:600;">${status}</td></tr>`;
     }).join('');
-  } catch {}
+  } catch(e) {
+    document.getElementById('orderHistoryBody').innerHTML = `<tr class="empty-row"><td colspan="6">Error: ${esc(e.message)}</td></tr>`;
+  }
 }
 
-function loadTxnHistory() {
-  const entries = Array.from(document.querySelectorAll('#logContainer .log-entry[data-type="funding"], #logContainer .log-entry[data-type="profit"]'));
+async function loadTxnHistory() {
   const tbody = document.getElementById('txnHistoryBody');
-  if (!entries.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="2">No transactions recorded yet</td></tr>';
-    return;
+  try {
+    const r = await fetch('/api/nh/activity'); if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const items = data.list || data.items || data.activities || [];
+    if (!items.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No activity recorded yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.slice(0, 50).map(a => {
+      const time = a.time || a.created || a.timestamp || '';
+      const timeStr = time ? new Date(time).toLocaleString() : '—';
+      const type = a.type || a.activityType || '?';
+      const amount = a.amount ? parseFloat(a.amount).toFixed(8) : '—';
+      const currency = a.currency || a.coin || 'BTC';
+      const note = esc(a.fiatAmount ? `≈$${parseFloat(a.fiatAmount).toFixed(2)}` : (a.note || a.description || ''));
+      const typeClr = type.includes('DEPOSIT') ? 'color:#22c55e' : type.includes('WITHDRAW') ? 'color:#f59e0b' : type.includes('HASHPOWER') ? 'color:#60a5fa' : '';
+      return `<tr><td style="white-space:nowrap;color:#64748b;">${timeStr}</td><td style="${typeClr};font-weight:600;">${esc(type)}</td><td>${amount}</td><td>${esc(currency)}</td><td style="color:#94a3b8;">${note}</td></tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Error loading activity: ${esc(e.message)}</td></tr>`;
   }
-  // entries are in DOM order (newest at top = first), show as-is
-  tbody.innerHTML = entries.map(e => {
-    const time = e.querySelector('.le-time')?.textContent || '';
-    const icon = e.querySelector('.le-icon')?.textContent || '·';
-    const msg  = e.querySelector('.le-msg')?.textContent || '';
-    return `<tr><td style="white-space:nowrap;color:#64748b;">${time}</td><td>${icon} ${esc(msg)}</td></tr>`;
-  }).join('');
 }
 
 async function loadStatus() {
@@ -776,6 +789,9 @@ document.getElementById('btnSweep').onclick = async () => {
 document.getElementById('cfgLimitGsol').addEventListener('input', updateCycleHint);
 document.getElementById('cfgOrderBtc').addEventListener('input',  updateCycleHint);
 document.getElementById('cfgMaxBid').addEventListener('input',    updateCycleHint);
+
+document.getElementById('btnRefreshOrders').onclick = loadOrderHistory;
+document.getElementById('btnRefreshActivity').onclick = loadTxnHistory;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadBotConfig();
