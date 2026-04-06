@@ -164,6 +164,20 @@ async function getNHBtcDepositAddress() {
   return entry.address;
 }
 
+// ── Bot order helpers ─────────────────────────────────────────────────────
+// myOrders requires ts= (cursor-based pagination); without it NH returns 400.
+function myOrdersQS() {
+  return `algorithm=EQUIHASH&op=LT&limit=100&ts=${Date.now()}`;
+}
+// NH does not return the 'note' field in myOrders responses.
+// Identify bot orders by pool ID (cached after first ensureNhPool() call)
+// AND status=ACTIVE (status is an object {code,description}, not a string).
+function isBotOrder(o) {
+  const poolId = config.pools?.EQUIHASH?.pool_id;
+  const active = o.status?.code === 'ACTIVE' || o.status === 'ACTIVE';
+  return active && (!poolId || o.pool?.id === poolId);
+}
+
 // ── Bot cycle ─────────────────────────────────────────────────────────────
 async function runBotCycle() {
   botLogEntry('cycle start');
@@ -174,7 +188,7 @@ async function runBotCycle() {
     // Fetch NH BTC balance, NH active bot orders, Binance ZEC balance in parallel
     const [nhBtcRes, nhOrdersRes, bnAccRes] = await Promise.allSettled([
       nhRequest('GET', '/main/api/v2/accounting/accounts2'),
-      nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&op=LT&limit=100'),
+      nhRequest('GET', '/main/api/v2/hashpower/myOrders', myOrdersQS()),
       binanceRequest('GET', '/api/v3/account', {}),
     ]);
 
@@ -189,7 +203,7 @@ async function runBotCycle() {
     const allNhOrders = nhOrdersRes.status === 'fulfilled' && nhOrdersRes.value.status === 200
       ? (nhOrdersRes.value.body.list || [])
       : [];
-    const botOrders = allNhOrders.filter(o => o.note === 'shabtc-bot');
+    const botOrders = allNhOrders.filter(isBotOrder);
 
     let bnZec = 0, bnUsdc = 0;
     if (bnAccRes.status === 'fulfilled' && bnAccRes.value.status === 200) {
@@ -850,7 +864,7 @@ app.get('/api/orderbook', (req, res) => {
 app.get('/api/myorders', async (req, res) => {
   const algo = req.query.algo || 'EQUIHASH';
   try {
-    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', `algorithm=${algo}&op=LT&limit=100`);
+    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', `algorithm=${algo}&op=LT&limit=100&ts=${Date.now()}`);
     res.status(result.status).json(result.body);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -894,9 +908,9 @@ app.post('/api/config', (req, res) => {
 app.get('/api/bot/status', async (req, res) => {
   // Also fetch live NH active bot orders for the UI
   try {
-    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&op=LT&limit=100');
+    const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', myOrdersQS());
     const orders = result.status === 200
-      ? (result.body.list || []).filter(o => o.note === 'shabtc-bot')
+      ? (result.body.list || []).filter(isBotOrder)
       : [];
     const btcPrice = liveCache?.prices?.btc || 0;
     const enriched = orders.map(o => ({
@@ -905,7 +919,7 @@ app.get('/api/bot/status', async (req, res) => {
       bid_btc:  parseFloat(o.price || 0),
       bid_usd:  +(parseFloat(o.price || 0) * btcPrice).toFixed(2),
       speed:    parseFloat(o.acceptedCurrentSpeed || 0),
-      alive:    o.alive,
+      active:   o.status?.code === 'ACTIVE',
     }));
     res.json({ ...botStatus, orders: enriched });
   } catch (e) {
@@ -935,8 +949,8 @@ app.post('/api/bot/stop', async (req, res) => {
   stopBot();
   if (req.body && req.body.cancel_orders) {
     try {
-      const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', 'algorithm=EQUIHASH&op=LT&limit=100');
-      const orders = result.status === 200 ? (result.body.list || []).filter(o => o.note === 'shabtc-bot') : [];
+      const result = await nhRequest('GET', '/main/api/v2/hashpower/myOrders', myOrdersQS());
+      const orders = result.status === 200 ? (result.body.list || []).filter(isBotOrder) : [];
       for (const o of orders) {
         await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`).catch(() => {});
       }
