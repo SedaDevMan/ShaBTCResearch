@@ -279,7 +279,7 @@ async function runBotCycle() {
         const placedAt = meta?.placed_at || (o.startTs ? new Date(o.startTs).getTime() : 0);
         const ageMs  = placedAt ? Date.now() - placedAt : 0;
         const noMiners = parseInt(o.rigsCount || 0) === 0 && parseFloat(o.acceptedCurrentSpeed || 0) === 0;
-        if (noMiners && ageMs > 40 * 60 * 1000) {
+        if (noMiners && ageMs > 90 * 60 * 1000) {
           try {
             await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
             delete botOrderMeta[o.id];
