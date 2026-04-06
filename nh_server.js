@@ -279,7 +279,7 @@ async function runBotCycle() {
         const placedAt = meta?.placed_at || (o.startTs ? new Date(o.startTs).getTime() : 0);
         const ageMs  = placedAt ? Date.now() - placedAt : 0;
         const noMiners = parseInt(o.rigsCount || 0) === 0 && parseFloat(o.acceptedCurrentSpeed || 0) === 0;
-        if (noMiners && ageMs > 2 * 60 * 1000) {
+        if (noMiners && ageMs > 10 * 60 * 1000) {
           try {
             await nhRequest('DELETE', `/main/api/v2/hashpower/order/${o.id}`);
             delete botOrderMeta[o.id];
@@ -386,51 +386,74 @@ async function placeBotOrder(cfg, arb) {
   const btcPrice = liveCache.prices.btc;
   const eqMkt   = liveCache.nh_market.EQUIHASH;
 
-  // Bid = min fill price + $50 premium.
-  // Bidding below min_fill_btc gets zero hashrate (all miners already allocated to higher bids).
-  // A $50 premium above the cheapest paying order is enough to attract those miners to us.
-  const premiumBtc  = 50 / btcPrice;
-  const minFillBtc  = eqMkt.min_fill_btc || eqMkt.btc;
-  // NH requires price precision ≤ 4 decimal places (orderbook prices all follow this pattern)
-  const bidBtc      = +(Math.round((minFillBtc + premiumBtc) * 10000) / 10000).toFixed(8);
+  const NH_MIN_AMOUNT = 0.001;
+  const NH_MIN_LIMIT  = 0.003;
+  const NH_FEE        = 1.03;
+  const actualUsdPerUnit = liveCache.zec_arb?.actual_usd_per_unit || 0;
+
+  // ── Fetch fresh orderbook to determine real bid floor and pre-flight check ──
+  // We need real-time data here: cached liveCache may be 30s stale.
+  // "Real floor" = lowest STANDARD order where miners are ACTUALLY hashing (payingSpeed > 0
+  //  AND rigsCount > 0). Miners at orders below real floor are genuinely free to switch to us.
+  // We set a $300 premium above real floor so miners see a meaningful pay increase (~$300/GSol/day
+  // ≈ enough to overcome switching friction). $50 was not enough — miners ignored it.
+  let freshOrders = [];
+  try {
+    const freshOB = await fetchJSON(`${NH_API}/main/api/v2/hashpower/orderBook?algorithm=EQUIHASH&size=100&page=0`);
+    if (freshOB?.orders) freshOrders = freshOB.orders;
+    else if (freshOB?.stats) for (const loc of Object.values(freshOB.stats)) if (loc.orders) freshOrders.push(...loc.orders);
+  } catch (e) {
+    botLogEntry(`pre-flight orderbook fetch failed: ${e.message} — proceeding with cached data`);
+  }
+
+  // Real floor: lowest STANDARD order with rigsCount > 0 AND payingSpeed > 0.001 GSol/s.
+  // These are the orders with real miners currently working. Miners will prefer our higher bid.
+  // Falls back to cached min_fill_btc if no such order found.
+  const activeStd = freshOrders.filter(o =>
+    o.alive && o.type === 'STANDARD' &&
+    parseInt(o.rigsCount || 0) > 0 &&
+    parseFloat(o.payingSpeed || 0) > 0.001
+  );
+  const realFloorBtc = activeStd.length > 0
+    ? Math.min(...activeStd.map(o => parseFloat(o.price)))
+    : (eqMkt.min_fill_btc || eqMkt.btc);
+
+  // Max profitable bid: the highest bid that still meets min_arb_ratio.
+  // With a 1% safety buffer so a small market move doesn't immediately kill the edge.
+  const maxProfitableBtc = actualUsdPerUnit > 0
+    ? actualUsdPerUnit / (cfg.min_arb_ratio * btcPrice * NH_FEE) * 0.99
+    : 0;
+
+  if (maxProfitableBtc <= realFloorBtc) {
+    botLogEntry(`no edge: market floor ${realFloorBtc.toFixed(4)} BTC already above max profitable ${maxProfitableBtc.toFixed(4)} BTC — waiting for better prices`);
+    return;
+  }
+
+  // Bid at floor + $300 premium (enough to pull miners), capped at the profitable ceiling.
+  // This always bids as aggressively as possible while remaining profitable.
+  const targetBtc = realFloorBtc + 300 / btcPrice;
+  const rawBid    = Math.min(targetBtc, maxProfitableBtc);
+  // NH requires price precision ≤ 4 decimal places
+  const bidBtc    = +(Math.round(rawBid * 10000) / 10000).toFixed(8);
+  const arbAtBid  = actualUsdPerUnit / (bidBtc * btcPrice * NH_FEE);
+
+  botLogEntry(`pre-flight: realFloor=${realFloorBtc.toFixed(4)} BTC (${activeStd.length} active orders) maxProfit=${maxProfitableBtc.toFixed(4)} → bid=${bidBtc.toFixed(4)} BTC arb=${arbAtBid.toFixed(3)}×`);
 
   if (bidBtc * btcPrice > cfg.max_bid_usd) {
     botLogEntry(`bid $${(bidBtc * btcPrice).toFixed(0)} > max_bid_usd $${cfg.max_bid_usd} — skipping`);
     return;
   }
 
-  // ── Edge check: verify arb at our specific bid before committing ──
-  // Global arb uses cheapest alive order (market price), but we may bid lower.
-  // Recalculate with our actual bid to be sure we have positive edge.
-  const actualUsdPerUnit = liveCache.zec_arb?.actual_usd_per_unit || 0;
-  const NH_FEE = 1.03;
-  const arbAtBid = actualUsdPerUnit > 0 ? actualUsdPerUnit / (bidBtc * btcPrice * NH_FEE) : 0;
-  if (arbAtBid < cfg.min_arb_ratio) {
-    botLogEntry(`no edge at bid ${bidBtc.toFixed(8)} BTC: arb=${arbAtBid.toFixed(4)}× < min ${cfg.min_arb_ratio}× — pausing, will retry next cycle`);
+  // ── Pre-flight speed check ──
+  // Confirm miners with rigsCount > 0 exist at prices below our bid.
+  const switchableSpeed = freshOrders
+    .filter(o => o.alive && o.type === 'STANDARD' && parseInt(o.rigsCount || 0) > 0 && parseFloat(o.price || 0) < bidBtc)
+    .reduce((sum, o) => sum + parseFloat(o.payingSpeed || 0), 0);
+  if (switchableSpeed < NH_MIN_LIMIT) {
+    botLogEntry(`pre-flight: no miners with rigsCount>0 below bid (${switchableSpeed.toFixed(6)} GSol/s) — skipping, $2.50 fee saved`);
     return;
   }
-
-  // ── Pre-flight: check switchable STANDARD miner speed before paying $2.50 fee ──
-  // Fetch fresh orderbook (not cached) and sum payingSpeed of STANDARD orders below our bid.
-  // If no miners are available to switch to us, skip placement entirely.
-  const NH_MIN_AMOUNT = 0.001;
-  const NH_MIN_LIMIT  = 0.003;
-  try {
-    const freshOB = await fetchJSON(`${NH_API}/main/api/v2/hashpower/orderBook?algorithm=EQUIHASH&size=100&page=0`);
-    let freshOrders = [];
-    if (freshOB?.orders) freshOrders = freshOB.orders;
-    else if (freshOB?.stats) for (const loc of Object.values(freshOB.stats)) if (loc.orders) freshOrders.push(...loc.orders);
-    const switchableSpeed = freshOrders
-      .filter(o => o.alive && o.type === 'STANDARD' && parseFloat(o.price || 0) < bidBtc)
-      .reduce((sum, o) => sum + parseFloat(o.payingSpeed || 0), 0);
-    if (switchableSpeed < NH_MIN_LIMIT) {
-      botLogEntry(`pre-flight: no switchable STANDARD miners at bid ${bidBtc.toFixed(4)} BTC (${switchableSpeed.toFixed(6)} GSol/s) — skipping, $2.50 fee saved`);
-      return;
-    }
-    botLogEntry(`pre-flight: ${switchableSpeed.toFixed(5)} GSol/s switchable at bid ${bidBtc.toFixed(4)} BTC — proceeding`);
-  } catch (e) {
-    botLogEntry(`pre-flight orderbook fetch failed: ${e.message} — proceeding anyway`);
-  }
+  botLogEntry(`pre-flight: ${switchableSpeed.toFixed(5)} GSol/s switchable miners below bid — proceeding`);
 
   // Configurable hashrate limit — higher = faster cycle, lower timing risk.
   // Estimated cycle hours = (order_amount_btc / (limit_gsol × bid_btc)) / 24h
@@ -973,6 +996,14 @@ app.post('/api/bot/config', (req, res) => {
 app.post('/api/bot/start', (req, res) => {
   startBot();
   res.json({ ok: true, enabled: true });
+});
+
+app.post('/api/bot/reset-streak', (req, res) => {
+  const prev = deadOrderStreak;
+  deadOrderStreak = 0;
+  deadOrderCooldownUntil = 0;
+  botLogEntry(`dead-order streak reset (was ${prev}) — placement unblocked`);
+  res.json({ ok: true, prev_streak: prev });
 });
 
 app.post('/api/bot/stop', async (req, res) => {

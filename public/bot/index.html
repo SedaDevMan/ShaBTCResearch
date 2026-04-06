@@ -204,6 +204,7 @@
         <button class="btn-red"   id="btnStop">■ STOP BOT</button>
         <button class="btn-amber" id="btnTopup">Force Top-up</button>
         <button class="btn-gray"  id="btnSweep">Force Sweep</button>
+        <button class="btn-gray"  id="btnResetStreak" title="Clear dead-order cooldown and try placing again immediately">↺ Reset Cooldown</button>
       </div>
       <table>
         <thead>
@@ -821,6 +822,12 @@ document.getElementById('btnSweep').onclick = async () => {
 document.getElementById('cfgLimitGsol').addEventListener('input', updateCycleHint);
 document.getElementById('cfgOrderBtc').addEventListener('input',  updateCycleHint);
 document.getElementById('cfgMaxBid').addEventListener('input',    updateCycleHint);
+
+document.getElementById('btnResetStreak').onclick = async () => {
+  const r = await fetch('/api/bot/reset-streak', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+  const d = await r.json();
+  d.ok ? setTimeout(loadLog, 500) : alert('Error: ' + JSON.stringify(d));
+};
 
 document.getElementById('btnRefreshOrders').onclick = loadOrderHistory;
 document.getElementById('btnRefreshActivity').onclick = loadTxnHistory;
